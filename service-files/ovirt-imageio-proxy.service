@@ -1,0 +1,13 @@
+[Unit]
+Description=oVirt ImageIO Proxy
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/ovirt-imageio
+ExecStart=/bin/sh -c 'bin/python proxy/ovirt-imageio-proxy'
+KillSignal=SIGTERM
+KillMode=mixed
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
