@@ -1,0 +1,21 @@
+[Unit]
+Description=oVirt ImageIO Daemon
+# The daemon should only be started if a certificate was rolled out
+# Otherwise the daemon startup will fail
+ConditionPathExists=/etc/pki/vdsm/certs/vdsmcert.pem
+
+[Service]
+Type=notify
+Environment=/opt/ovirt-imageio/bin/python:$PATH
+WorkingDirectory=/opt/ovirt-imageio
+ExecStart=/bin/sh -c '/opt/ovirt-imageio/bin/python daemon/ovirt-imageio-daemon'
+KillSignal=SIGTERM
+KillMode=mixed
+Restart=always
+# The user and group should be the same as vdsm uses.
+User=vdsm
+Group=kvm
+
+[Install]
+WantedBy=multi-user.target
+
