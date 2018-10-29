@@ -263,7 +263,7 @@ class Images(imageio_server.Images):
                                                     methodargs['backup_path'],
                                                     methodargs['disk_format']),
                                                     tickets.get(ticket_id).size,
-                                                    self.config.daemon.buffer_size),
+                                                    self.config.daemon.buffer_size,
                                                     #queue='restore_tasks',
                                                     retry = True,
                                                     retry_policy={
