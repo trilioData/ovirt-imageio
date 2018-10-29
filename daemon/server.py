@@ -261,7 +261,7 @@ class Images(imageio_server.Images):
                 ctask = celery_tasks.restore.apply_async((ticket_id,
                                                     ticket.url.path,
                                                     methodargs['backup_path'],
-                                                    methodargs['disk_format']),
+                                                    methodargs['disk_format'],
                                                     tickets.get(ticket_id).size,
                                                     self.config.daemon.buffer_size),
                                                     #queue='restore_tasks',
