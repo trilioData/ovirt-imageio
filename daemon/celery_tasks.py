@@ -267,6 +267,17 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             backup_image_file_path,
             disk_format):
 
+        qemu_cmd = ["qemu-img", "info", "--output", "json", volume_path]
+        qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE)
+        data, err = qemu_process.communicate()
+        data = json.loads(data)
+        backing_path = str(data.get("full-backing-filename", None))
+
+        file_name = str(os.path.basename(volume_path))
+        temp_file = '/var/triliovault-mounts/staging/' + file_name
+
+        print 'Qemu convert backup to temporary location : [{0}]'.format(file_name)
+
         cmdspec = [
             'qemu-img',
             'convert',
@@ -278,7 +289,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                                       volume_path, flag='oflag=direct'):
             cmdspec += ['-t', 'none']
 
-        cmdspec += ['-O', disk_format, backup_image_file_path, volume_path]
+        cmdspec += ['-O', disk_format, backup_image_file_path, temp_file]
 
         default_cache = True
         if default_cache is True:
@@ -318,7 +329,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 print(("copying from %(backup_path)s to "
                            "%(volume_path)s %(percentage)s %% completed\n") %
                           {'backup_path': backup_image_file_path,
-                           'volume_path': volume_path,
+                           'volume_path': temp_file,
                            'percentage': str(percentage)})
 
                 percentage = float(percentage)
@@ -339,6 +350,21 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                             {'exit_code': _returncode,
                              'stderr': process.stderr.read(),
                              'cmd': cmd})
+
+        print 'Moving temporary volume: [{0}] to [{1}]'.format(temp_file, volume_path)
+
+        shutil.move(temp_file, volume_path)
+
+        print 'Rebasing volume: [{0}] to backing file: [{1}]'.format(volume_path, backing_path)
+
+        if backing_path and disk_format != 'raw':
+            backing_file_name = str(os.path.basename(backing_path))
+            process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file_name + ' ' + volume_path, stdout=subprocess.PIPE,
+                                       shell=True)
+            stdout, stderr = process.communicate()
+            if stderr:
+                log.error("Unable to change the backing file", volume_path, stderr)
+
     if disk_format == "cow":
         disk_format = "qcow2"
     else:
