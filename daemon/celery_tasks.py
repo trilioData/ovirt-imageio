@@ -59,6 +59,21 @@ def enqueue_output(out, queue):
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.backup")
 def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id):
 
+    print 'Backing source disk : [{0}] to target location: [{1}]'.format(path, dest)
+
+    if not os.path.exists(str(path)):
+        error = 'Source Path [{0}] does not exists.'.format(path)
+        path_dir = os.path.dirname(path)
+        snapshot_disk_name = os.path.basename(dest)
+        new_path = str(os.path.join(path_dir, snapshot_disk_name))
+        if not os.path.exists(new_path):
+            print 'Other path [{0}] too does not exists.'.format(new_path)
+            raise Exception(error)
+        else:
+            path = new_path
+            print 'Original path does not exists. Backing up : [{0}]'.format(path)
+
+    print 'Backup type: [{0}]'.format(type)
     if type == "full":
         cmdspec = [
             'qemu-img',
@@ -182,8 +197,11 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                         commands.append(command)
                     except IOError as e:
                         print("Unable to copy file. %s" % e)
+                        raise e
                     except:
-                        print("Unexpected error:", sys.exc_info())
+                        error = "Unexpected error : [{0}]".format(sys.exc_info)
+                        print(error)
+                        raise Exception(error)
                 else:
                     try:
                         shutil.copy(path, tempdir)
@@ -191,8 +209,10 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                         commands.append(command)
                     except IOError as e:
                         print("Unable to copy file. %s" % e)
+                        raise e
                     except:
                         print("Unexpected error:", sys.exc_info())
+                        raise Exception(sys.exc_info())
                     break
                 path = str(record.get('full-backing-filename'))
             string_commands = ";".join(str(x) for x in commands)
@@ -271,7 +291,11 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE)
         data, err = qemu_process.communicate()
         data = json.loads(data)
-        backing_path = str(data.get("full-backing-filename", None))
+        backing_path = data.get("full-backing-filename", None)
+
+        log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_path)
+
+        print log_msg
 
         file_name = str(os.path.basename(volume_path))
         temp_file = '/var/triliovault-mounts/staging/' + file_name
@@ -290,6 +314,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             cmdspec += ['-t', 'none']
 
         cmdspec += ['-O', disk_format, backup_image_file_path, temp_file]
+
+        #cmdspec += ['-O', disk_format, backup_image_file_path, volume_path]
 
         default_cache = True
         if default_cache is True:
@@ -353,17 +379,30 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         print 'Moving temporary volume: [{0}] to [{1}]'.format(temp_file, volume_path)
 
-        shutil.move(temp_file, volume_path)
+        try:
 
-        print 'Rebasing volume: [{0}] to backing file: [{1}]'.format(volume_path, backing_path)
+            self.update_state(state='PENDING',
+                              meta={'status': 'Copying temporary disk data to volume'})
 
-        if backing_path and disk_format != 'raw':
-            backing_file_name = str(os.path.basename(backing_path))
-            process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file_name + ' ' + volume_path, stdout=subprocess.PIPE,
-                                       shell=True)
-            stdout, stderr = process.communicate()
-            if stderr:
-                log.error("Unable to change the backing file", volume_path, stderr)
+            shutil.move(temp_file, volume_path)
+
+            print type(backing_path)
+
+            if backing_path and disk_format != 'raw':
+                print 'Rebasing volume: [{0}] to backing file: [{1}].' \
+                      'Volume format: [{2}]'.format(volume_path, backing_path, disk_format)
+                backing_file_name = str(os.path.basename(str(backing_path)))
+                process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file_name + ' ' + volume_path, stdout=subprocess.PIPE,
+                                           shell=True)
+                stdout, stderr = process.communicate()
+                if stderr:
+                    log.error("Unable to change the backing file", volume_path, stderr)
+        except Exception as ex:
+            print ex
+            error = 'Error occurred: [{0}]'.format(ex)
+            self.update_state(state='EXCEPTION',
+                              meta={'exception': error})
+            raise Exception(error)
 
     if disk_format == "cow":
         disk_format = "qcow2"
