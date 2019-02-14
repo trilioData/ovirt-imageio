@@ -6,8 +6,11 @@ from Queue import Queue, Empty
 from threading import Thread
 import uuid
 import os
+import uuid
 import shutil
 import sys
+import ConfigParser
+import io
 from celery import Celery
 from celery.contrib import rdb
 
@@ -19,6 +22,8 @@ import logging
 import logging.config
 
 log = logging.getLogger("server")
+
+CONF_DIR = "/etc/ovirt-imageio-daemon"
 
 
 app = Celery('celery_tasks', backend='redis', broker='redis://localhost:6379/0')
@@ -180,9 +185,13 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
             if stderr:
                 log.error("Unable to change the backing file", dest, stderr)
         else:
-
             temp_random_id = generate_random_string(5)
-            tempdir = '/var/triliovault-mounts/staging/' + temp_random_id
+            with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
+                sample_config = f.read()
+            config = ConfigParser.RawConfigParser(allow_no_value=True)
+            config.readfp(io.BytesIO(sample_config))
+            mountpath = config.get('nfs_config', 'mount_path')
+            tempdir = mountpath + '/staging/' + temp_random_id
             os.makedirs(tempdir)
             commands = []
             for record in result:
@@ -297,10 +306,13 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         print log_msg
 
-        file_name = str(os.path.basename(volume_path))
-        temp_file = '/var/triliovault-mounts/staging/' + file_name
+        volume_dir = os.path.dirname(volume_path)
 
-        print 'Qemu convert backup to temporary location : [{0}]'.format(file_name)
+        temp_id = str(uuid.uuid4())
+
+        temp_file = os.path.join(volume_dir, temp_id)
+
+        print 'Qemu convert backup to temporary location : [{0}]'.format(temp_file)
 
         cmdspec = [
             'qemu-img',
@@ -341,7 +353,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         read_thread.start()
 
         percentage = 0.0
-        while process.poll() is None:
+        while percentage < 100:
             try:
                 try:
                     output = queue.get(timeout=300)
@@ -386,9 +398,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
             shutil.move(temp_file, volume_path)
 
-            print type(backing_path)
-
-            if backing_path and disk_format != 'raw':
+            if backing_path:
                 print 'Rebasing volume: [{0}] to backing file: [{1}].' \
                       'Volume format: [{2}]'.format(volume_path, backing_path, disk_format)
                 backing_file_name = str(os.path.basename(str(backing_path)))
@@ -397,18 +407,22 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 stdout, stderr = process.communicate()
                 if stderr:
                     log.error("Unable to change the backing file", volume_path, stderr)
+
         except Exception as ex:
             print ex
             error = 'Error occurred: [{0}]'.format(ex)
             self.update_state(state='EXCEPTION',
                               meta={'exception': error})
             raise Exception(error)
+        finally:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
-    if disk_format == "cow":
-        disk_format = "qcow2"
-    else:
-        disk_format = "raw"
-    transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
+        if disk_format == "cow":
+            disk_format = "qcow2"
+        else:
+            disk_format = "raw"
+        transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
 
 def generate_random_string(string_length=5):
     """Returns a random string of length string_length."""
