@@ -418,11 +418,11 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
-        if disk_format == "cow":
-            disk_format = "qcow2"
-        else:
-            disk_format = "raw"
-        transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
+    if disk_format == "cow":
+        disk_format = "qcow2"
+    else:
+        disk_format = "raw"
+    transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
 
 def generate_random_string(string_length=5):
     """Returns a random string of length string_length."""
