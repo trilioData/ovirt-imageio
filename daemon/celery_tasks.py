@@ -1,13 +1,18 @@
 import os
 import re
-
+import stat
 import subprocess
 from Queue import Queue, Empty
 from threading import Thread
 import uuid
+import pwd
+import grp
 import os
+import uuid
 import shutil
 import sys
+import ConfigParser
+import io
 from celery import Celery
 from celery.contrib import rdb
 
@@ -19,6 +24,8 @@ import logging
 import logging.config
 
 log = logging.getLogger("server")
+
+CONF_DIR = "/etc/ovirt-imageio-daemon"
 
 
 app = Celery('celery_tasks', backend='redis', broker='redis://localhost:6379/0')
@@ -45,7 +52,7 @@ def check_for_odirect_support(src, dest, flag='oflag=direct'):
         nova_utils.execute('dd', 'count=0', 'if=%s' % src, 'of=%s' % dest,
                            flag, run_as_root=True)
         return True
-    except processutils.ProcessExecutionError:
+    except Exception:
         return False
 
 
@@ -180,9 +187,13 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
             if stderr:
                 log.error("Unable to change the backing file", dest, stderr)
         else:
-
             temp_random_id = generate_random_string(5)
-            tempdir = '/var/triliovault-mounts/staging/' + temp_random_id
+            with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
+                sample_config = f.read()
+            config = ConfigParser.RawConfigParser(allow_no_value=True)
+            config.readfp(io.BytesIO(sample_config))
+            mountpath = config.get('nfs_config', 'mount_path')
+            tempdir = mountpath + '/staging/' + temp_random_id
             os.makedirs(tempdir)
             commands = []
             for record in result:
@@ -287,21 +298,31 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             backup_image_file_path,
             disk_format):
 
+        # Get base path and base volume name for creating tmp dir
+        filename = os.path.basename(volume_path)
+        temp_dir = os.path.dirname(volume_path) + "/tmp"
+
+        # Get Backing file if present for current disk.
         qemu_cmd = ["qemu-img", "info", "--output", "json", volume_path]
         qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE)
         data, err = qemu_process.communicate()
         data = json.loads(data)
-        backing_path = data.get("full-backing-filename", None)
+        backing_file = data.get("backing-filename", None)
 
-        log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_path)
-
+        log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_file)
         print log_msg
 
-        file_name = str(os.path.basename(volume_path))
-        temp_file = '/var/triliovault-mounts/staging/' + file_name
+        if backing_file:
 
-        print 'Qemu convert backup to temporary location : [{0}]'.format(file_name)
+            # Create tmp dir if not present
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+                temp_file = temp_dir + "/" + filename
+                target = temp_file
+        else:
+            target = volume_path
 
+        # Convert and concise disk to a tmp location
         cmdspec = [
             'qemu-img',
             'convert',
@@ -313,9 +334,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                                       volume_path, flag='oflag=direct'):
             cmdspec += ['-t', 'none']
 
-        cmdspec += ['-O', disk_format, backup_image_file_path, temp_file]
-
-        #cmdspec += ['-O', disk_format, backup_image_file_path, volume_path]
+        cmdspec += ['-O', disk_format, backup_image_file_path, target]
 
         default_cache = True
         if default_cache is True:
@@ -324,6 +343,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             if 'none' in cmdspec:
                 cmdspec.remove('none')
         cmd = " ".join(cmdspec)
+
         print('transfer_qemu_image_to_volume cmd %s ' % cmd)
         process = subprocess.Popen(cmdspec,
                                    stdin=subprocess.PIPE,
@@ -341,7 +361,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         read_thread.start()
 
         percentage = 0.0
-        while process.poll() is None:
+        while percentage < 100:
             try:
                 try:
                     output = queue.get(timeout=300)
@@ -371,43 +391,75 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         _returncode = process.returncode  # pylint: disable=E1101
         if _returncode:
             print(('Result was %s' % _returncode))
-            raise Exception("Execution error %(exit_code)d (%(stderr)s). "
-                            "cmd %(cmd)s" %
-                            {'exit_code': _returncode,
-                             'stderr': process.stderr.read(),
-                             'cmd': cmd})
-
-        print 'Moving temporary volume: [{0}] to [{1}]'.format(temp_file, volume_path)
-
-        try:
-
-            self.update_state(state='PENDING',
-                              meta={'status': 'Copying temporary disk data to volume'})
-
-            shutil.move(temp_file, volume_path)
-
-            print type(backing_path)
-
-            if backing_path and disk_format != 'raw':
-                print 'Rebasing volume: [{0}] to backing file: [{1}].' \
-                      'Volume format: [{2}]'.format(volume_path, backing_path, disk_format)
-                backing_file_name = str(os.path.basename(str(backing_path)))
-                process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file_name + ' ' + volume_path, stdout=subprocess.PIPE,
-                                           shell=True)
-                stdout, stderr = process.communicate()
-                if stderr:
-                    log.error("Unable to change the backing file", volume_path, stderr)
-        except Exception as ex:
-            print ex
-            error = 'Error occurred: [{0}]'.format(ex)
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            error = "Execution error %(exit_code)d (%(stderr)s). cmd %(cmd)s" % {'exit_code': _returncode,
+                     'stderr': process.stderr.read(),
+                     'cmd': cmd}
             self.update_state(state='EXCEPTION',
                               meta={'exception': error})
             raise Exception(error)
 
+
+        if backing_file:
+            try:
+                # Move the Volume file to actual location
+                print 'Move the Volume file to actual location: [{0}] to [{1}]'.format(temp_file, volume_path)
+                self.update_state(state='PENDING',
+                                  meta={'status': 'Copying temporary disk data to actual volume path'})
+
+                shutil.move(temp_file, volume_path)
+
+                uid = pwd.getpwnam("vdsm").pw_uid
+
+                gid = grp.getgrnam("kvm").gr_gid
+
+                os.chown(volume_path, uid, gid)
+
+                self.update_state(state='PENDING',
+                                  meta={'status': 'Performing Rebase operation to point disk to its backing file'})
+                print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
+                      'Volume format: [{2}]'.format(volume_path, backing_file, disk_format)
+
+                basedir = os.path.dirname(volume_path)
+                process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file + ' ' + filename, stdout=subprocess.PIPE,
+                                            cwd=basedir, shell=True)
+                stdout, stderr = process.communicate()
+                if stderr:
+                    error = "Unable to change the backing file "+ volume_path + " " + stderr
+                    log.error(error)
+                    raise Exception(error)
+
+            except IOError as ex:
+                print ex
+                log.error("Unable to move temp file as temp file was never created. Exception: ", ex)
+                self.update_state(state='EXCEPTION',
+                                  meta={'exception': ex})
+                raise Exception(ex)
+
+            except Exception as ex:
+                print ex
+                error = 'Error occurred: [{0}]'.format(ex)
+                self.update_state(state='EXCEPTION',
+                                  meta={'exception': error})
+                raise Exception(error)
+
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+
+        os.chmod(volume_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+
+        # Clean the temp files created in restore process if any
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+    # Determine right format and send it accordingly
     if disk_format == "cow":
         disk_format = "qcow2"
     else:
         disk_format = "raw"
+
     transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
 
 def generate_random_string(string_length=5):
