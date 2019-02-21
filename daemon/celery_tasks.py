@@ -375,7 +375,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 print(("copying from %(backup_path)s to "
                            "%(volume_path)s %(percentage)s %% completed\n") %
                           {'backup_path': backup_image_file_path,
-                           'volume_path': temp_file,
+                           'volume_path': target,
                            'percentage': str(percentage)})
 
                 percentage = float(percentage)
@@ -384,6 +384,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                                   meta={'percentage': percentage})
 
             except Exception as ex:
+                print ex
                 pass
 
         process.stdin.close()
