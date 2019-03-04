@@ -372,6 +372,12 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 percentage = re.search(r'\d+\.\d+', output).group(0)
 
+                try:
+                    percentage = float(percentage)
+                except Exception as ex:
+                    print ex
+                    raise ex
+
                 print(("copying from %(backup_path)s to "
                            "%(volume_path)s %(percentage)s %% completed\n") %
                           {'backup_path': backup_image_file_path,
@@ -411,12 +417,6 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 shutil.move(temp_file, volume_path)
 
-                uid = pwd.getpwnam("vdsm").pw_uid
-
-                gid = grp.getgrnam("kvm").gr_gid
-
-                os.chown(volume_path, uid, gid)
-
                 self.update_state(state='PENDING',
                                   meta={'status': 'Performing Rebase operation to point disk to its backing file'})
                 print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
@@ -448,8 +448,6 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             finally:
                 if os.path.exists(temp_dir):
                     shutil.rmtree(temp_dir)
-
-        os.chmod(volume_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
 
         # Clean the temp files created in restore process if any
         if os.path.exists(temp_dir):

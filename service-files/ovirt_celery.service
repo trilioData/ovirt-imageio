@@ -3,6 +3,8 @@ Description=Ovirt imageio Celery Service
 After=network.target
 
 [Service]
+User=vdsm
+Group=kvm
 Type=forking
 Environment=/opt/ovirt-imageio/bin/python:$PATH
 EnvironmentFile=/opt/ovirt-imageio/daemon/ovirt_celery

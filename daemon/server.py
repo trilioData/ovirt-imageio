@@ -223,7 +223,7 @@ class Images(imageio_server.Images):
                     size = self.request.range.end - offset
 
             ticket = tickets.authorize(ticket_id, "read", 0, size)
-
+            ticket.extend(1800)
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
             try:
@@ -255,6 +255,8 @@ class Images(imageio_server.Images):
             offset = content_range.start or 0
 
             ticket = tickets.authorize(ticket_id, "write", offset, size)
+            ticket.extend(1800)
+
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
             try:
