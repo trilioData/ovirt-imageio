@@ -2,8 +2,6 @@
 Description=oVirt ImageIO Proxy
 
 [Service]
-User=vdsm
-Group=kvm
 Type=notify
 WorkingDirectory=/opt/ovirt-imageio
 ExecStart=/bin/sh -c 'bin/python proxy/ovirt-imageio-proxy'
