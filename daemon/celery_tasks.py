@@ -14,6 +14,7 @@ import sys
 import ConfigParser
 import io
 from celery import Celery
+from custom_exceptions import QemuImageConvertError
 from celery.contrib import rdb
 
 from ovirt_imageio_common import directio
@@ -56,12 +57,16 @@ def check_for_odirect_support(src, dest, flag='oflag=direct'):
         return False
 
 
-def enqueue_output(out, queue):
-    line = out.read(17)
-    while line:
+def enqueue_output(out, err, queue):
+    error_line = err.read()
+    if error_line is not None and len(error_line) != 0:
+        queue.put(error_line)
+    else:
         line = out.read(17)
-        queue.put(line)
-    out.close()
+        while line:
+            line = out.read(17)
+            queue.put(line)
+        out.close()
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.backup")
 def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id):
@@ -100,7 +105,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
 
         queue = Queue()
         read_thread = Thread(target=enqueue_output,
-                             args=(process.stdout, queue))
+                             args=(process.stdout, process.stderr, queue))
 
         read_thread.daemon = True  # thread dies with the program
         read_thread.start()
@@ -250,7 +255,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
 
             queue = Queue()
             read_thread = Thread(target=enqueue_output,
-                                 args=(process.stdout, queue))
+                                 args=(process.stdout, process.stderr, queue))
 
             read_thread.daemon = True  # thread dies with the program
             read_thread.start()
@@ -355,7 +360,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         queue = Queue()
         read_thread = Thread(target=enqueue_output,
-                             args=(process.stdout, queue))
+                             args=(process.stdout, process.stderr, queue))
 
         read_thread.daemon = True  # thread dies with the program
         read_thread.start()
@@ -365,8 +370,12 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             try:
                 try:
                     output = queue.get(timeout=300)
+                    if "error" in output:
+                        raise QemuImageConvertError(output)
                 except Empty:
                     continue
+                except QemuImageConvertError as ex:
+                    raise ex
                 except Exception as ex:
                     print(ex)
 
@@ -388,7 +397,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 self.update_state(state='PENDING',
                                   meta={'percentage': percentage})
-
+            except QemuImageConvertError as ex:
+                raise ex
             except Exception as ex:
                 print ex
                 pass
