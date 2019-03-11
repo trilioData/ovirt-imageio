@@ -313,15 +313,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_file)
         print log_msg
 
-        if backing_file:
-
-            # Create tmp dir if not present
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
-                temp_file = temp_dir + "/" + filename
-                target = temp_file
-        else:
-            target = volume_path
+        target = volume_path
 
         # Convert and concise disk to a tmp location
         cmdspec = [
@@ -371,7 +363,10 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 except Exception as ex:
                     print(ex)
 
-                percentage = re.search(r'\d+\.\d+', output).group(0)
+                try:
+                    percentage = re.search(r'\d+\.\d+', output).group(0)
+                except AttributeError as ex:
+                    pass
 
                 try:
                     percentage = float(percentage)
