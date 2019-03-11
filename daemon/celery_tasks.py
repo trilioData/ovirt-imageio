@@ -14,6 +14,7 @@ import sys
 import ConfigParser
 import io
 from celery import Celery
+from custom_exceptions import QemuImageConvertError
 from celery.contrib import rdb
 
 from ovirt_imageio_common import directio
@@ -231,6 +232,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                        , cwd=tempdir, shell=True)
             stdout, stderr = process.communicate()
             if stderr:
+                shutil.rmtree(tempdir)
                 raise Exception(stdout)
             cmdspec = [
                 'qemu-img',
@@ -312,15 +314,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_file)
         print log_msg
 
-        if backing_file:
-
-            # Create tmp dir if not present
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
-                temp_file = temp_dir + "/" + filename
-                target = temp_file
-        else:
-            target = volume_path
+        target = volume_path
 
         # Convert and concise disk to a tmp location
         cmdspec = [
@@ -370,7 +364,10 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 except Exception as ex:
                     print(ex)
 
-                percentage = re.search(r'\d+\.\d+', output).group(0)
+                try:
+                    percentage = re.search(r'\d+\.\d+', output).group(0)
+                except AttributeError as ex:
+                    pass
 
                 try:
                     percentage = float(percentage)
@@ -388,10 +385,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 self.update_state(state='PENDING',
                                   meta={'percentage': percentage})
-
             except Exception as ex:
-                print ex
-                pass
+                raise ex
 
         process.stdin.close()
 
@@ -410,13 +405,6 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         if backing_file:
             try:
-                # Move the Volume file to actual location
-                print 'Move the Volume file to actual location: [{0}] to [{1}]'.format(temp_file, volume_path)
-                self.update_state(state='PENDING',
-                                  meta={'status': 'Copying temporary disk data to actual volume path'})
-
-                shutil.move(temp_file, volume_path)
-
                 self.update_state(state='PENDING',
                                   meta={'status': 'Performing Rebase operation to point disk to its backing file'})
                 print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
