@@ -232,6 +232,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                        , cwd=tempdir, shell=True)
             stdout, stderr = process.communicate()
             if stderr:
+                shutil.rmtree(tempdir)
                 raise Exception(stdout)
             cmdspec = [
                 'qemu-img',
@@ -404,13 +405,6 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         if backing_file:
             try:
-                # Move the Volume file to actual location
-                print 'Move the Volume file to actual location: [{0}] to [{1}]'.format(temp_file, volume_path)
-                self.update_state(state='PENDING',
-                                  meta={'status': 'Copying temporary disk data to actual volume path'})
-
-                shutil.move(temp_file, volume_path)
-
                 self.update_state(state='PENDING',
                                   meta={'status': 'Performing Rebase operation to point disk to its backing file'})
                 print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
