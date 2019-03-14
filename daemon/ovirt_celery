@@ -14,8 +14,11 @@ CELERY_APP="celery_tasks"
 
 # How to call manage.py
 CELERYD_MULTI="multi"
+CELERYD_TASK_SOFT_TIME_LIMIT=120
+CELERYD_PREFETCH_MULTIPLIER = 1
+CELERY_ACKS_LATE = True
 # Extra command-line arguments to the worker
-CELERYD_OPTS="--concurrency=2"
+CELERYD_OPTS="--concurrency=4"
 # - %n will be replaced with the first part of the nodename.
 # - %I will be replaced with the current child process index
 #   and is important when using the prefork pool to avoid race conditions.
