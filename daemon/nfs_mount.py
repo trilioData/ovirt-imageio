@@ -14,7 +14,7 @@ def is_online(nfsshare):
         cmd = subprocess.Popen("rpcinfo -s " + nfsserver, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         rpcinfo, error = cmd.communicate()
         if not error:
-          for i in rpcinfo[0].split("\n")[1:]:
+          for i in rpcinfo.split("\n")[1:]:
               if len(i.split()) and i.split()[3] == 'mountd':
                   status = True
                   break
@@ -39,14 +39,12 @@ def is_mounted(nfsshare, mountpath):
 
 def mount_backup_target(nfsshare, mountpath):
     if is_online(nfsshare):
-        try:
-          command = ['timeout', '-sKILL', '30', 'sudo',
-                      'mount', nfsshare,
-                      mountpath]
-          subprocess.check_call(command, shell=False)
-        except subprocess.CalledProcessError as e:
-          log.exception(str(e))
-          return False
+        command = ['sudo', 'mount', nfsshare, mountpath]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+        stdout, stderr = process.communicate()
+        if stderr:
+            log.exception(stderr)
+            return False
     else:
         log.exception("NFS Server is Offline")
         return False
