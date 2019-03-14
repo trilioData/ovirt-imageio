@@ -192,15 +192,6 @@ class Images(imageio_server.Images):
         if not ticket_id:
             raise HTTPBadRequest("Ticket id is required")
 
-        body = self.request.body
-        methodargs = json.loads(body)
-        if not 'backup_path' in methodargs:
-            raise HTTPBadRequest("Malformed request. Requires backup_path in the body")
-
-        destdir = os.path.split(methodargs['backup_path'])[0]
-        if not os.path.exists(destdir):
-            raise HTTPBadRequest("Backup_path does not exists")
-
         with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
             sample_config = f.read()
         config = ConfigParser.RawConfigParser(allow_no_value=True)
@@ -212,6 +203,14 @@ class Images(imageio_server.Images):
             if not nfs_mount.mount_backup_target(nfsshare, mountpath):
                 raise HTTPBadRequest("Backup target not mounted.")
 
+        body = self.request.body
+        methodargs = json.loads(body)
+        if not 'backup_path' in methodargs:
+            raise HTTPBadRequest("Malformed request. Requires backup_path in the body")
+
+        destdir = os.path.split(methodargs['backup_path'])[0]
+        if not os.path.exists(destdir):
+            raise HTTPBadRequest("Backup_path does not exists")
 
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':

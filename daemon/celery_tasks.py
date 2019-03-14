@@ -354,54 +354,39 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         read_thread.daemon = True  # thread dies with the program
         read_thread.start()
 
-        percentage = 0.0
-        while percentage < 100:
-            try:
-                try:
-                    output = queue.get(timeout=300)
-                except Empty:
-                    continue
-                except Exception as ex:
-                    print(ex)
-
-                try:
-                    percentage = re.search(r'\d+\.\d+', output).group(0)
-                except AttributeError as ex:
-                    pass
-
-                try:
-                    percentage = float(percentage)
-                except Exception as ex:
-                    print ex
-                    raise ex
-
-                print(("copying from %(backup_path)s to "
+        while process.poll() is None:
+            while not queue.empty():
+                output = queue.get(timeout=300)
+                percentage_found = re.search(r'(\d+\.\d+)', output)
+                percentage = percentage_found.group() if percentage_found else output.split("/")[0].replace("(", "")
+                if percentage and (percentage != "0" or percentage != "00"):
+                    print(("copying from %(backup_path)s to "
                            "%(volume_path)s %(percentage)s %% completed\n") %
                           {'backup_path': backup_image_file_path,
                            'volume_path': target,
                            'percentage': str(percentage)})
 
-                percentage = float(percentage)
-
-                self.update_state(state='PENDING',
-                                  meta={'percentage': percentage})
-            except Exception as ex:
-                raise ex
-
-        process.stdin.close()
+                    self.update_state(state='PENDING',
+                                      meta={'percentage': percentage})
 
         _returncode = process.returncode  # pylint: disable=E1101
         if _returncode:
             print(('Result was %s' % _returncode))
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
+            stderr = process.stderr.read()
             error = "Execution error %(exit_code)d (%(stderr)s). cmd %(cmd)s" % {'exit_code': _returncode,
-                     'stderr': process.stderr.read(),
-                     'cmd': cmd}
+                                                                                 'stderr': stderr,
+                                                                                 'cmd': cmd}
             self.update_state(state='EXCEPTION',
                               meta={'exception': error})
-            raise Exception(error)
+            raise QemuImageConvertError(stderr)
+        else:
+            percentage = 100
+            self.update_state(state='COMPLETED',
+                              meta={'percentage': percentage})
 
+        process.stdin.close()
 
         if backing_file:
             try:
