@@ -343,9 +343,6 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                                       volume_path, flag='oflag=direct'):
             cmdspec += ['-t', 'none']
 
-        if backing_file:
-            cmdspec += ['-B', backing_file]
-
         cmdspec += ['-O', disk_format, backup_image_file_path, target]
 
         default_cache = True
@@ -412,6 +409,37 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                                     'disk_id': basepath})
 
         process.stdin.close()
+
+        if backing_file:
+            try:
+                self.update_state(state='PENDING',
+                                  meta={'status': 'Performing Rebase operation to point disk to its backing file'})
+                print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
+                      'Volume format: [{2}]'.format(volume_path, backing_file, disk_format)
+
+                basedir = os.path.dirname(volume_path)
+                process = subprocess.Popen('qemu-img rebase -u -b ' + backing_file + ' ' + target,
+                                           stdout=subprocess.PIPE,
+                                           cwd=basedir, shell=True)
+                stdout, stderr = process.communicate()
+                if stderr:
+                    error = "Unable to change the backing file " + volume_path + " " + stderr
+                    log.error(error)
+                    raise Exception(error)
+
+            except IOError as ex:
+                print ex
+                log.error("Unable to move temp file as temp file was never created. Exception: ", ex)
+                self.update_state(state='EXCEPTION',
+                                  meta={'exception': ex})
+                raise Exception(ex)
+
+            except Exception as ex:
+                print ex
+                error = 'Error occurred: [{0}]'.format(ex)
+                self.update_state(state='EXCEPTION',
+                                  meta={'exception': error})
+                raise Exception(error)
 
     # Determine right format and send it accordingly
     if disk_format == "cow":
