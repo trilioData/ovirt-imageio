@@ -6,7 +6,7 @@ ConditionPathExists=/etc/pki/vdsm/certs/vdsmcert.pem
 
 [Service]
 Type=notify
-Environment=/opt/ovirt-imageio/bin/python:$PATH
+Environment=/opt/ovirt-imageio/bin/python
 WorkingDirectory=/opt/ovirt-imageio
 ExecStart=/bin/sh -c '/opt/ovirt-imageio/bin/python daemon/ovirt-imageio-daemon'
 KillSignal=SIGTERM
