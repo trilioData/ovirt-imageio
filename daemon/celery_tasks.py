@@ -171,16 +171,20 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
             print('Executing task id {0.id}, args: {0.args!r} kwargs: {0.kwargs!r}'.format(
                 self.request))
             gigs = 0
-            with open(dest, "w+") as f:
-                for data in op:
-                    total += len(data)
-                    f.write(data)
-                    if total/1024/1024/1024 > gigs:
-                        gigs = total/1024/1024/1024
-                        percentage = (total/size) * 100
-                        self.update_state(state='PENDING',
-                                          meta={'percentage': percentage,
-                                                'disk_id': basepath})
+            try:
+                with open(dest, "w+") as f:
+                    for data in op:
+                        total += len(data)
+                        f.write(data)
+                        if total/1024/1024/1024 > gigs:
+                            gigs = total/1024/1024/1024
+                            percentage = (total/size) * 100
+                            self.update_state(state='PENDING',
+                                              meta={'percentage': percentage,
+                                                    'disk_id': basepath})
+            except Exception as exc:
+                log.error("Error in writing data to dest:{}".format(path))
+                raise Exception(exc.message)
             process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
             stdout, stderr = process.communicate()
             if stderr:
@@ -216,9 +220,9 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                                 'disk_id': os.path.basename(path)})
                     except IOError as e:
                         print("Unable to copy file. %s" % e)
-                        raise e
-                    except:
-                        error = "Unexpected error : [{0}]".format(sys.exc_info)
+                        raise Exception(e.message)
+                    except Exception as ex:
+                        error = "Unexpected error : [{0}]".format(ex.message)
                         print(error)
                         raise Exception(error)
                 else:
@@ -234,10 +238,11 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                                 'disk_id': os.path.basename(path)})
                     except IOError as e:
                         print("Unable to copy file. %s" % e)
-                        raise e
-                    except:
-                        print("Unexpected error:", sys.exc_info())
-                        raise Exception(sys.exc_info())
+                        raise Exception(e.message)
+                    except Exception as ex:
+                        error = "Unexpected error: [{0}]".format(ex.message)
+                        print(error)
+                        raise Exception(error)
                     break
                 path = str(record.get('full-backing-filename'))
             string_commands = ";".join(str(x) for x in commands)
