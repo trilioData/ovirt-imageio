@@ -20,6 +20,7 @@ import ConfigParser
 import io
 from wsgiref import simple_server
 
+import subprocess
 from six.moves import socketserver
 
 import systemd.daemon
@@ -211,6 +212,21 @@ class Images(imageio_server.Images):
         destdir = os.path.split(methodargs['backup_path'])[0]
         if not os.path.exists(destdir):
             raise HTTPBadRequest("Backup_path does not exists")
+
+        # Check if Celery is running or not
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            self.log.info("Celery service is not running at the moment. Restarting...")
+            process = subprocess.Popen("sudo service ovirt_celery start",
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE,
+                                       shell=True)
+            stdout, stderr = process.communicate()
+            celery_service_status = os.system("service ovirt_celery status")
+            if celery_service_status != 0:
+                raise Exception(
+                    "Celery service is down and cannot be restarted at the moment due to: {}".format(stderr)
+                )
 
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
