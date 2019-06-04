@@ -186,7 +186,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                 log.error("Error in writing data to dest:{}".format(path))
                 raise Exception(exc.message)
             process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
-            stdout, stderr = process.communicate()
+                
             if stderr:
                 log.error("Unable to change the backing file", dest, stderr)
         else:
@@ -315,7 +315,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
 
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.restore")
-def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, size, buffer_size):
+def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, size, buffer_size, restore_size, actual_size):
 
     def transfer_qemu_image_to_volume(
             volume_path,
@@ -434,7 +434,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
             except IOError as ex:
                 print ex
-                log.error("Unable to move temp file as temp file was never created. Exception: ", ex)
+                log.error("Unable to move temp file as temp file was never created. Exception: " + ex)
                 self.update_state(state='EXCEPTION',
                                   meta={'exception': ex})
                 raise Exception(ex)
@@ -452,6 +452,37 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
     else:
         disk_format = "raw"
 
+    if is_blk_device(volume_path):
+        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
+        stdout, stderr = lvm_info.communicate()
+        if not stderr:
+            lvm_size = int(stdout.split('SIZE="')[1].split('G"')[0])
+            if lvm_size < restore_size:
+                if restore_size and actual_size:
+                    log.info("LVM size before extend: {}".format(lvm_size))
+                    lvm_path = os.readlink(volume_path)
+                    extend_by = restore_size - lvm_size
+                    if extend_by + lvm_size > actual_size:
+                        log.info("No more space remained for doing the disk restore. Disk is already being extended to actual size")
+                    lvm_extend_cmd = "sudo -u root lvextend -L +{}G {}".format(extend_by, lvm_path)
+
+                    lvm_extend = subprocess.Popen(lvm_extend_cmd, stdout=subprocess.PIPE, shell=True)
+                    stdout, stderr = lvm_extend.communicate()
+                    if stderr:
+                        log.error("Failed to extend LVM disk Exception:" + stderr)
+                    else:
+                        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
+                        stdout, stderr = lvm_info.communicate()
+                        if not stderr:
+                            lvm_size = int(stdout.split('SIZE="')[1].split('G"')[0])
+                            log.info("LVM size after extend: {}".format(lvm_size))
+                else:
+                    log.info("Snapshot restore size or actual size of VM is None. Skipping LVM block extend..")
+            else:
+                log.info("LVM size is already larger than restore size. No need to extend the disk")
+        else:
+            log.error("error getting actual size of the lvm block")
+        
     transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
 
 def generate_random_string(string_length=5):
