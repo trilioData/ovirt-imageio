@@ -47,6 +47,7 @@ from ovirt_imageio_daemon import tickets
 from ovirt_imageio_daemon import wsgi
 from ovirt_imageio_daemon import profile
 
+from celery.task.control import revoke
 import celery_tasks
 import nfs_mount
 
@@ -280,7 +281,9 @@ class Images(imageio_server.Images):
                                                     methodargs['backup_path'],
                                                     methodargs['disk_format'],
                                                     tickets.get(ticket_id).size,
-                                                    self.config.daemon.buffer_size),
+                                                    self.config.daemon.buffer_size,
+                                                    methodargs['restore_size'],
+                                                    methodargs['actual_size']),
                                                     #queue='restore_tasks',
                                                     retry = True,
                                                     retry_policy={
@@ -320,6 +323,24 @@ class Tasks(object):
             ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
             if ctasks.result:
                 result = ctasks.result
+            if isinstance(result, Exception):
+                result = {'Exception': result.message}
+            result['status'] = ctasks.status
+            #ctasks.get()
+        except KeyError:
+            raise HTTPNotFound("No such task %r" % task_id)
+        except Exception as e:
+            raise Exception(e.message)
+        return response(payload=result)
+    
+    def delete(self, task_id):
+        if not task_id:
+            raise HTTPBadRequest("Task id is required")
+
+        self.log.info("Stopping execution of task with id: %s", task_id)
+        result = {}
+        try:
+            result = revoke(task_id, terminate=True)
             if isinstance(result, Exception):
                 result = {'Exception': result.message}
             result['status'] = ctasks.status
