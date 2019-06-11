@@ -32,21 +32,22 @@ from webob.exc import (
 )
 
 from ovirt_imageio_common import configloader
-from ovirt_imageio_common import directio
-from ovirt_imageio_common import errors
+from ovirt_imageio_common import http
 from ovirt_imageio_common import ssl
 from ovirt_imageio_common import util
 from ovirt_imageio_common import version
-from ovirt_imageio_common import web
+from ovirt_imageio_common import errors
 from ovirt_imageio_daemon import server as imageio_server
 
 from ovirt_imageio_daemon import config
 from ovirt_imageio_daemon import pki
 from ovirt_imageio_daemon import uhttp
 from ovirt_imageio_daemon import tickets
-from ovirt_imageio_daemon import wsgi
+from ovirt_imageio_daemon import auth
 from ovirt_imageio_daemon import profile
+from ovirt_imageio_daemon import images
 
+from celery.task.control import revoke
 import celery_tasks
 import nfs_mount
 
@@ -83,12 +84,13 @@ def main(args):
 
 
 def configure_logger():
-    imageio_server.configure_logger()
+    conf = os.path.join(CONF_DIR, "logger.conf")
+    logging.config.fileConfig(conf, disable_existing_loggers=False)
 
 
 def terminate(signo, frame):
     global running
-    imageio_server.terminate(signo, frame)
+    log.info("Received signal %d, shutting down", signo)
     running = False
 
 def start(config):
@@ -110,7 +112,41 @@ def start(config):
 
 
 def stop():
-    imageio_server.stop()
+    global remote_service, local_service, control_service
+    log.debug("Stopping services")
+    remote_service.stop()
+    local_service.stop()
+    control_service.stop()
+    remote_service = None
+    local_service = None
+
+
+class Service(object):
+
+    name = None
+
+    def start(self):
+        util.start_thread(self._run, name=self.name)
+
+    def stop(self):
+        log.debug("Stopping %s", self.name)
+        self._server.shutdown()
+
+    @property
+    def port(self):
+        return self._server.server_port
+
+    @property
+    def address(self):
+        return self._server.server_address
+
+    def _run(self):
+        log.debug("Starting %s", self.name)
+        self._server.serve_forever(
+            poll_interval=self._config.daemon.poll_interval)
+        log.debug("%s terminated normally", self.name)
+
+#control_service = None
 
 def response(status=200, payload=None):
     """
@@ -120,23 +156,46 @@ def response(status=200, payload=None):
     return webob.Response(status=status, body=body,
                           content_type="application/json")
 
-class RemoteService(imageio_server.RemoteService):
+
+class RemoteService(Service):
+    """
+    Service used to access images data from remote host.
+    Access to this service requires a valid ticket that can be installed using
+    the local control service.
+    """
+
+    name = "remote.service"
 
     def __init__(self, config):
         self._config = config
-        self._server = wsgi.WSGIServer(
+        self._server = http.Server(
             (config.images.host, config.images.port),
-            wsgi.WSGIRequestHandler)
+            http.Connection)
+        # TODO: Make clock configurable, disabled by default.
+        self._server.clock_class = util.Clock
         if config.images.port == 0:
             config.images.port = self.port
         self._secure_server()
-        app = web.Application(config, [(r"/images/(.*)", Images),
-                                       (r"/tasks/(.*)", Tasks)])
-        self._server.set_app(app)
+        self._server.app = http.Router([
+            (r"/images/(.*)", Images(config)),
+            (r"/tasks/(.*)", Tasks(config)),
+        ])
+
         log.debug("%s listening on port %d", self.name, self.port)
 
+    def _secure_server(self):
+        key_file = pki.key_file(self._config)
+        cert_file = pki.cert_file(self._config)
+        log.debug("Securing server (certfile=%s, keyfile=%s)",
+                  cert_file, key_file)
+        context = ssl.server_context(
+            cert_file, cert_file, key_file,
+            enable_tls1_1=self._config.daemon.enable_tls1_1)
+        self._server.socket = context.wrap_socket(
+            self._server.socket, server_side=True)
 
-class LocalService(imageio_server.LocalService):
+
+class LocalService(Service):
     """
     Service used to access images locally.
 
@@ -148,17 +207,20 @@ class LocalService(imageio_server.LocalService):
 
     def __init__(self, config):
         self._config = config
-        self._server = uhttp.UnixWSGIServer(
-            config.images.socket, uhttp.UnixWSGIRequestHandler)
+        self._server = uhttp.Server(
+            config.images.socket, uhttp.Connection)
+        # TODO: Make clock configurable, disabled by default.
+        self._server.clock_class = util.Clock
         if config.images.socket == "":
             config.images.socket = self.address
-        app = web.Application(config, [(r"/images/(.*)", Images),
-                                       (r"/tasks/(.*)", Tasks)])
-        self._server.set_app(app)
+        self._server.app = http.Router([
+            (r"/images/(.*)", Images(config)),
+            (r"/tasks/(.*)", Tasks(config)),
+        ])
         log.debug("%s listening on %r", self.name, self.address)
 
 
-class ControlService(imageio_server.ControlService):
+class ControlService(Service):
     """
     Service used to control imageio daemon on a host.
 
@@ -170,28 +232,32 @@ class ControlService(imageio_server.ControlService):
 
     def __init__(self, config):
         self._config = config
-        self._server = uhttp.UnixWSGIServer(
-            config.tickets.socket, uhttp.UnixWSGIRequestHandler)
+        self._server = uhttp.Server(
+            config.tickets.socket, uhttp.Connection)
+        # TODO: Make clock configurable, disabled by default.
+        self._server.clock_class = util.Clock
         if config.tickets.socket == "":
             config.tickets.socket = self.address
-        app = web.Application(config, [
-            (r"/tickets/(.*)", imageio_server.Tickets),
-            (r"/profile/", profile.Handler)])
-        self._server.set_app(app)
+        self._server.app = http.Router([
+            (r"/tickets/(.*)", tickets.Handler(config)),
+            (r"/profile/", profile.Handler(config)),
+        ])
+
         log.debug("%s listening on %r", self.name, self.address)
 
-class Images(imageio_server.Images):
+
+class Images(images.Handler):
     """
     Request handler for the /images/ resource.
     """
     log = logging.getLogger("images")
 
-    def __init__(self, config, request, clock=None):
-        super(Images, self).__init__(config, request, clock)
+    def __init__(self, config):
+        super(Images, self).__init__(config)
 
-    def post(self, ticket_id):
+    def post(self, req, resp, ticket_id):
         if not ticket_id:
-            raise HTTPBadRequest("Ticket id is required")
+            raise http.Error(http.BAD_REQUEST, "Ticket id is required")
 
         with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
             sample_config = f.read()
@@ -202,16 +268,16 @@ class Images(imageio_server.Images):
         mountpath = config.get('nfs_config', 'mount_path')
         if not nfs_mount.is_mounted(nfsshare, mountpath):
             if not nfs_mount.mount_backup_target(nfsshare, mountpath):
-                raise HTTPBadRequest("Backup target not mounted.")
+                raise http.Error(http.BAD_REQUEST, "Backup target not mounted.")
 
-        body = self.request.body
+        body = req.read()
         methodargs = json.loads(body)
         if not 'backup_path' in methodargs:
-            raise HTTPBadRequest("Malformed request. Requires backup_path in the body")
+            raise http.Error(http.BAD_REQUEST, "Malformed request. Requires backup_path in the body")
 
         destdir = os.path.split(methodargs['backup_path'])[0]
         if not os.path.exists(destdir):
-            raise HTTPBadRequest("Backup_path does not exists")
+            raise http.Error(http.BAD_REQUEST, "Backup_path does not exists")
 
         # Check if Celery is running or not
         celery_service_status = os.system("service ovirt_celery status")
@@ -230,22 +296,25 @@ class Images(imageio_server.Images):
 
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
-            offset = 0
-            size = None
-            if self.request.range:
-                offset = self.request.range.start
-                if self.request.range.end is not None:
-                    size = self.request.range.end - offset
+            offset = req.content_range.first if req.content_range else 0
+            size = req.content_length
+            if size is None:
+                raise http.Error(http.BAD_REQUEST, "Content-Length header is required")
+            if size < 0:
+                raise http.Error(http.BAD_REQUEST, "Invalid Content-Length header: %r" % size)
 
-            ticket = tickets.authorize(ticket_id, "read", 0, size)
-            ticket.extend(1800)
+            try:
+                ticket = auth.authorize(ticket_id, "read", offset, size)
+                ticket.extend(1800)
+            except errors.AuthorizationError as e:
+                raise http.Error(http.FORBIDDEN, str(e))
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
             try:
                 ctask = celery_tasks.backup.apply_async((ticket_id,
                                                         ticket.url.path,
                                                         methodargs['backup_path'],
-                                                        tickets.get(ticket_id).size,
+                                                        ticket.size,
                                                         methodargs['type'],
                                                         self.config.daemon.buffer_size,
                                                         methodargs['recent_snap_id']),
@@ -261,16 +330,18 @@ class Images(imageio_server.Images):
                 self.log.info("Submitting celery task raised: %r", exc)
             print "Submitted backup"
         elif methodargs['method'] == 'restore':
-            size = self.request.content_length
+            size = req.content_length
             if size is None:
-                raise HTTPBadRequest("Content-Length header is required")
+                raise http.Error(http.BAD_REQUEST, "Content-Length header is required")
             if size < 0:
-                raise HTTPBadRequest("Invalid Content-Length header: %r" % size)
-            content_range = web.content_range(self.request)
-            offset = content_range.start or 0
+                raise http.Error(http.BAD_REQUEST, "Invalid Content-Length header: %r" % size)
+            offset = req.content_range.first if req.content_range else 0
 
-            ticket = tickets.authorize(ticket_id, "write", offset, size)
-            ticket.extend(1800)
+            try:
+                ticket = auth.authorize(ticket_id, "read", offset, size)
+                ticket.extend(1800)
+            except errors.AuthorizationError as e:
+                raise http.Error(http.FORBIDDEN, str(e))
 
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
@@ -279,9 +350,10 @@ class Images(imageio_server.Images):
                                                     ticket.url.path,
                                                     methodargs['backup_path'],
                                                     methodargs['disk_format'],
-                                                    tickets.get(ticket_id).size,
-                                                    self.config.daemon.buffer_size),
-                                                    #queue='restore_tasks',
+                                                    ticket.size,
+                                                    self.config.daemon.buffer_size,
+                                                    methodargs['restore_size'],
+                                                    methodargs['actual_size']),
                                                     retry = True,
                                                     retry_policy={
                                                         'max_retries': 3,
@@ -293,11 +365,11 @@ class Images(imageio_server.Images):
                 self.log.info("Submitting celery task raised: %r", exc)
             print "Submitted restore"
         else:
-            raise HTTPBadRequest("Invalid method")
+            raise http.Error(http.BAD_REQUEST, "Invalid method")
+        resp.status_code = 206
+        resp.headers["Location"] = "/tasks/%s" % ctask.id
+        return resp
 
-        r = response(status=206)
-        r.headers["Location"] = "/tasks/%s" % ctask.id
-        return r
 
 class Tasks(object):
     """
@@ -305,14 +377,12 @@ class Tasks(object):
     """
     log = logging.getLogger("tasks")
 
-    def __init__(self, config, request, clock=None):
+    def __init__(self, config):
         self.config = config
-        self.request = request
-        self.clock = clock
 
-    def get(self, task_id):
+    def get(self, req, resp, task_id):
         if not task_id:
-            raise HTTPBadRequest("Task id is required")
+            raise http.Error(http.BAD_REQUEST, "Task id is required")
 
         self.log.info("Retrieving task %s", task_id)
         result = {}
@@ -323,102 +393,26 @@ class Tasks(object):
             if isinstance(result, Exception):
                 result = {'Exception': result.message}
             result['status'] = ctasks.status
-            #ctasks.get()
         except KeyError:
-            raise HTTPNotFound("No such task %r" % task_id)
+            raise http.Error(http.NOT_FOUND, "No such task %r" % task_id)
         except Exception as e:
             raise Exception(e.message)
-        return response(payload=result)
+        return resp.send_json(result)
 
-
-class ThreadedWSGIServer(socketserver.ThreadingMixIn,
-                         simple_server.WSGIServer):
-    """
-    Threaded WSGI HTTP server.
-    """
-    daemon_threads = True
-
-
-class WSGIRequestHandler(simple_server.WSGIRequestHandler):
-    """
-    WSGI request handler using HTTP/1.1.
-    """
-
-    protocol_version = "HTTP/1.1"
-
-    def address_string(self):
-        """
-        Override to avoid slow and unneeded name lookup.
-        """
-        return self.client_address[0]
-
-    def handle(self):
-        """
-        Override to use fixed ServerHandler.
-        Copied from wsgiref/simple_server.py, using our ServerHandler.
-        """
-        self.raw_requestline = self.rfile.readline(65537)
-        if len(self.raw_requestline) > 65536:
-            self.requestline = ''
-            self.request_version = ''
-            self.command = ''
-            self.send_error(414)
-            return
-
-        if not self.parse_request():  # An error code has been sent, just exit
-            return
-
-        handler = ServerHandler(
-            self.rfile, self.wfile, self.get_stderr(), self.get_environ()
-        )
-        handler.request_handler = self      # backpointer for logging
-        handler.run(self.server.get_app())
-
-    def log_message(self, format, *args):
-        """
-        Override to avoid unwanted logging to stderr.
-        """
-
-
-class ServerHandler(simple_server.ServerHandler):
-
-    # wsgiref handers ignores the http request handler's protocol_version, and
-    # uses its own version. This results in requests returning HTTP/1.0 instead
-    # of HTTP/1.1 - see https://bugzilla.redhat.com/1512317
+    # def delete(self, task_id):
+    #     if not task_id:
+    #         raise HTTPBadRequest("Task id is required")
     #
-    # Looking at python source we need to define here:
-    #
-    #   http_version = "1.1"
-    #
-    # Bug adding this break some tests.
-    # TODO: investigate this.
-
-    def write(self, data):
-        """
-        Override to allow writing buffer object.
-        Copied from wsgiref/handlers.py, removing the check for StringType.
-        """
-        if not self.status:
-            raise AssertionError("write() before start_response()")
-
-        elif not self.headers_sent:
-            # Before the first output, send the stored headers
-            self.bytes_sent = len(data)    # make sure we know content-length
-            self.send_headers()
-        else:
-            self.bytes_sent += len(data)
-
-        self._write(data)
-        self._flush()
-
-
-class UnixWSGIRequestHandler(uhttp.UnixWSGIRequestHandler):
-    """
-    WSGI over unix domain socket request handler using HTTP/1.1.
-    """
-    protocol_version = "HTTP/1.1"
-
-    def log_message(self, format, *args):
-        """
-        Override to avoid unwanted logging to stderr.
-        """
+    #     self.log.info("Stopping execution of task with id: %s", task_id)
+    #     result = {}
+    #     try:
+    #         result = revoke(task_id, terminate=True)
+    #         if isinstance(result, Exception):
+    #             result = {'Exception': result.message}
+    #         result['status'] = ctasks.status
+    #         #ctasks.get()
+    #     except KeyError:
+    #         raise HTTPNotFound("No such task %r" % task_id)
+    #     except Exception as e:
+    #         raise Exception(e.message)
+    #     return response(payload=result)

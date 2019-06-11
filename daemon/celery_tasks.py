@@ -13,6 +13,8 @@ import shutil
 import sys
 import ConfigParser
 import io
+
+import math
 from celery import Celery
 from custom_exceptions import QemuImageConvertError
 from celery.contrib import rdb
@@ -163,22 +165,20 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
         first_record_backing_file = first_record.get('backing-filename', None)
         recent_snap_path = recent_snap_id.get(str(first_record_backing_file), None)
         if first_record_backing_file and recent_snap_path:
-            op = directio.Send(path,
-                               None,
-                               size,
-                               buffersize=buffer_size)
-            total = 0
             print('Executing task id {0.id}, args: {0.args!r} kwargs: {0.kwargs!r}'.format(
                 self.request))
-            gigs = 0
             try:
-                with open(dest, "w+") as f:
-                    for data in op:
-                        total += len(data)
-                        f.write(data)
-                        if total/1024/1024/1024 > gigs:
-                            gigs = total/1024/1024/1024
-                            percentage = (total/size) * 100
+                with open(path, "r+") as src:
+                    with open(dest, "w+") as f:
+                        copied = 0
+                        while True:
+                            buf = src.read(buffer_size)
+                            if not buf:
+                                break
+                            f.write(buf)
+                            copied += len(buf)
+                            percentage = float(copied) / size * 100
+                            percentage = "%.2f" % percentage
                             self.update_state(state='PENDING',
                                               meta={'percentage': percentage,
                                                     'disk_id': basepath})
@@ -186,136 +186,139 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                 log.error("Error in writing data to dest:{}".format(path))
                 raise Exception(exc.message)
             process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
-            stdout, stderr = process.communicate()
+                
             if stderr:
                 log.error("Unable to change the backing file", dest, stderr)
         else:
-            self.update_state(state='PENDING',
-                              meta={'Task': 'Copying manual snapshots to staging area',
-                                    'disk_id': basepath})
-            temp_random_id = generate_random_string(5)
-            with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
-                sample_config = f.read()
-            config = ConfigParser.RawConfigParser(allow_no_value=True)
-            config.readfp(io.BytesIO(sample_config))
-            mountpath = config.get('nfs_config', 'mount_path')
-            tempdir = mountpath + '/staging/' + temp_random_id
-            os.makedirs(tempdir)
-            commands = []
-            for record in result:
-                filename = os.path.basename(str(record.get('filename', None)))
-                recent_snap_path = recent_snap_id.get(str(record.get('backing-filename')), None)
-                if record.get('backing-filename', None) and str(record.get('backing-filename', None)) and not recent_snap_path:
-                    try:
-                        self.update_state(state='PENDING',
-                                          meta={'Task': 'Copying manual snapshots to staging area',
-                                                'disk_id': os.path.basename(path)})
-                        shutil.copy(path, tempdir)
-                        backing_file = os.path.basename(str(record.get('backing-filename', None)))
+            tempdir = None
+            try:
+                self.update_state(state='PENDING',
+                                  meta={'Task': 'Copying manual snapshots to staging area',
+                                        'disk_id': basepath})
+                temp_random_id = generate_random_string(5)
+                with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
+                    sample_config = f.read()
+                config = ConfigParser.RawConfigParser(allow_no_value=True)
+                config.readfp(io.BytesIO(sample_config))
+                mountpath = config.get('nfs_config', 'mount_path')
+                tempdir = mountpath + '/staging/' + temp_random_id
+                os.makedirs(tempdir)
+                commands = []
+                for record in result:
+                    filename = os.path.basename(str(record.get('filename', None)))
+                    recent_snap_path = recent_snap_id.get(str(record.get('backing-filename')), None)
+                    if record.get('backing-filename', None) and str(record.get('backing-filename', None)) and not recent_snap_path:
+                        try:
+                            self.update_state(state='PENDING',
+                                              meta={'Task': 'Copying manual snapshots to staging area',
+                                                    'disk_id': os.path.basename(path)})
+                            shutil.copy(path, tempdir)
+                            backing_file = os.path.basename(str(record.get('backing-filename', None)))
 
-                        command = 'qemu-img rebase -u -b ' + backing_file + ' ' + filename
-                        commands.append(command)
-                        self.update_state(state='PENDING',
-                                          meta={'Task': 'Disk copy to staging area Completed',
-                                                'disk_id': os.path.basename(path)})
-                    except IOError as e:
-                        print("Unable to copy file. %s" % e)
-                        raise Exception(e.message)
-                    except Exception as ex:
-                        error = "Unexpected error : [{0}]".format(ex.message)
-                        print(error)
-                        raise Exception(error)
-                else:
-                    try:
-                        self.update_state(state='PENDING',
-                                          meta={'Task': 'Copying manual snapshots to staging area',
-                                                'disk_id': os.path.basename(path)})
-                        shutil.copy(path, tempdir)
-                        command = 'qemu-img rebase -u ' + filename
-                        commands.append(command)
-                        self.update_state(state='PENDING',
-                                          meta={'Task': 'Disk copy to staging area Completed',
-                                                'disk_id': os.path.basename(path)})
-                    except IOError as e:
-                        print("Unable to copy file. %s" % e)
-                        raise Exception(e.message)
-                    except Exception as ex:
-                        error = "Unexpected error: [{0}]".format(ex.message)
-                        print(error)
-                        raise Exception(error)
-                    break
-                path = str(record.get('full-backing-filename'))
-            string_commands = ";".join(str(x) for x in commands)
-            process = subprocess.Popen(string_commands, stdin=subprocess.PIPE, stdout=subprocess.PIPE
-                                       , cwd=tempdir, shell=True)
-            stdout, stderr = process.communicate()
-            if stderr:
-                shutil.rmtree(tempdir)
-                raise Exception(stdout)
-            self.update_state(state='PENDING',
-                              meta={'Task': 'Starting backup process...',
-                                    'disk_id': basepath})
-            cmdspec = [
-                'qemu-img',
-                'convert',
-                '-p',
-            ]
-            filename = os.path.basename(str(first_record.get('filename', None)))
-            path = os.path.join(tempdir, filename)
-            cmdspec += ['-O', 'qcow2', path, dest]
-            process = subprocess.Popen(cmdspec,
-                                       stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE,
-                                       bufsize=-1,
-                                       close_fds=True,
-                                       shell=False)
-
-            queue = Queue()
-            read_thread = Thread(target=enqueue_output,
-                                 args=(process.stdout, queue))
-
-            read_thread.daemon = True  # thread dies with the program
-            read_thread.start()
-
-            percentage = 0.0
-            while process.poll() is None:
-                try:
-                    try:
-                        output = queue.get(timeout=300)
-                    except Empty:
-                        continue
-                    except Exception as ex:
-                        print(ex)
-
-                    percentage = re.search(r'\d+\.\d+', output).group(0)
-
-                    print(("copying from %(path)s to "
-                           "%(dest)s %(percentage)s %% completed\n") %
-                          {'path': path,
-                           'dest': dest,
-                           'percentage': str(percentage)})
-
-                    percentage = float(percentage)
-
-                    self.update_state(state='PENDING',
-                                      meta={'percentage': percentage,
-                                            'disk_id': basepath})
-
-                except Exception as ex:
-                    pass
-            if recent_snap_path:
-                process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
+                            command = 'qemu-img rebase -u -b ' + backing_file + ' ' + filename
+                            commands.append(command)
+                            self.update_state(state='PENDING',
+                                              meta={'Task': 'Disk copy to staging area Completed',
+                                                    'disk_id': os.path.basename(path)})
+                        except IOError as e:
+                            print("Unable to copy file. %s" % e)
+                            raise Exception(e.message)
+                        except Exception as ex:
+                            error = "Unexpected error : [{0}]".format(ex.message)
+                            print(error)
+                            raise Exception(error)
+                    else:
+                        try:
+                            self.update_state(state='PENDING',
+                                              meta={'Task': 'Copying manual snapshots to staging area',
+                                                    'disk_id': os.path.basename(path)})
+                            shutil.copy(path, tempdir)
+                            command = 'qemu-img rebase -u ' + filename
+                            commands.append(command)
+                            self.update_state(state='PENDING',
+                                              meta={'Task': 'Disk copy to staging area Completed',
+                                                    'disk_id': os.path.basename(path)})
+                        except IOError as e:
+                            print("Unable to copy file. %s" % e)
+                            raise Exception(e.message)
+                        except Exception as ex:
+                            error = "Unexpected error: [{0}]".format(ex.message)
+                            print(error)
+                            raise Exception(error)
+                        break
+                    path = str(record.get('full-backing-filename'))
+                string_commands = ";".join(str(x) for x in commands)
+                process = subprocess.Popen(string_commands, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+                                           , cwd=tempdir, shell=True)
                 stdout, stderr = process.communicate()
                 if stderr:
-                    log.error("Unable to change the backing file", dest, stderr)
-            del_command = 'rm -rf ' + tempdir
-            delete_process = subprocess.Popen(del_command, shell=True, stdout=subprocess.PIPE)
-            delete_process.communicate()
+                    shutil.rmtree(tempdir)
+                    raise Exception(stdout)
+                self.update_state(state='PENDING',
+                                  meta={'Task': 'Starting backup process...',
+                                        'disk_id': basepath})
+                cmdspec = [
+                    'qemu-img',
+                    'convert',
+                    '-p',
+                ]
+                filename = os.path.basename(str(first_record.get('filename', None)))
+                path = os.path.join(tempdir, filename)
+                cmdspec += ['-O', 'qcow2', path, dest]
+                process = subprocess.Popen(cmdspec,
+                                           stdin=subprocess.PIPE,
+                                           stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE,
+                                           bufsize=-1,
+                                           close_fds=True,
+                                           shell=False)
+
+                queue = Queue()
+                read_thread = Thread(target=enqueue_output,
+                                     args=(process.stdout, queue))
+
+                read_thread.daemon = True  # thread dies with the program
+                read_thread.start()
+
+                percentage = 0.0
+                while process.poll() is None:
+                    try:
+                        try:
+                            output = queue.get(timeout=300)
+                        except Empty:
+                            continue
+                        except Exception as ex:
+                            print(ex)
+
+                        percentage = re.search(r'\d+\.\d+', output).group(0)
+
+                        print(("copying from %(path)s to "
+                               "%(dest)s %(percentage)s %% completed\n") %
+                              {'path': path,
+                               'dest': dest,
+                               'percentage': str(percentage)})
+
+                        percentage = float(percentage)
+
+                        self.update_state(state='PENDING',
+                                          meta={'percentage': percentage,
+                                                'disk_id': basepath})
+
+                    except Exception as ex:
+                        pass
+                if recent_snap_path:
+                    process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
+                    stdout, stderr = process.communicate()
+                    if stderr:
+                        log.error("Unable to change the backing file", dest, stderr)
+            finally:
+                if tempdir:
+                    if os.path.exists(tempdir):
+                        shutil.rmtree(tempdir)
 
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.restore")
-def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, size, buffer_size):
+def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, size, buffer_size, restore_size, actual_size):
 
     def transfer_qemu_image_to_volume(
             volume_path,
@@ -452,7 +455,60 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
     else:
         disk_format = "raw"
 
+    def __get_lvm_size_in_gb(stdout):
+        try:
+            block_size = stdout.split('SIZE="')[1].split("\"")[0]
+        except Exception as ex:
+            match_found = re.search("SIZE=\"([A-Z, 0-9]+)\"", stdout)
+            if match_found:
+                block_size = match_found.group(1)
+
+        if "K" in block_size:
+            lvm_size = math.ceil(float(block_size.split('K')[0]))
+            lvm_size = math.ceil(lvm_size / (1024 * 1024))
+        elif "M" in block_size:
+            lvm_size = math.ceil(float(block_size.split('M')[0]))
+            lvm_size = math.ceil(lvm_size / 1024)
+        elif "G" in block_size:
+            lvm_size = math.ceil(float(block_size.split('G')[0]))
+
+        return lvm_size
+
+    if is_blk_device(volume_path):
+        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
+        stdout, stderr = lvm_info.communicate()
+        if not stderr:
+            log.info("STDOUT: {}".format(stdout))
+            lvm_size_in_gb = __get_lvm_size_in_gb(stdout)
+            if restore_size and actual_size:
+                if lvm_size_in_gb < restore_size:
+                    log.info("LVM size before extend: {}".format(lvm_size_in_gb))
+                    lvm_path = os.readlink(volume_path)
+                    extend_by = restore_size - lvm_size_in_gb
+                    if extend_by + lvm_size_in_gb > actual_size:
+                        log.info(
+                            "No more space remained for doing the disk restore. Disk is already being extended to actual size")
+                    lvm_extend_cmd = "sudo -u root lvextend -L +{}G {}".format(extend_by, lvm_path)
+
+                    lvm_extend = subprocess.Popen(lvm_extend_cmd, stdout=subprocess.PIPE, shell=True)
+                    stdout, stderr = lvm_extend.communicate()
+                    if stderr:
+                        log.error("Failed to extend LVM disk Exception:" + stderr)
+                    else:
+                        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
+                        stdout, stderr = lvm_info.communicate()
+                        if not stderr:
+                            lvm_size = __get_lvm_size_in_gb(stdout)
+                            log.info("LVM size after extend: {}".format(lvm_size))
+                else:
+                    log.info("LVM size is already larger than restore size. No need to extend the disk")
+            else:
+                log.info("Snapshot restore size or actual size of VM is None. Skipping LVM block extend..")
+        else:
+            log.error("error getting actual size of the lvm block")
+
     transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
+
 
 def generate_random_string(string_length=5):
     """Returns a random string of length string_length."""
