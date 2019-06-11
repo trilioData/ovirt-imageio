@@ -437,7 +437,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
             except IOError as ex:
                 print ex
-                log.error("Unable to move temp file as temp file was never created. Exception: ", ex)
+                log.error("Unable to move temp file as temp file was never created. Exception: " + ex)
                 self.update_state(state='EXCEPTION',
                                   meta={'exception': ex})
                 raise Exception(ex)
@@ -488,6 +488,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                     if extend_by + lvm_size_in_gb > actual_size:
                         log.info(
                             "No more space remained for doing the disk restore. Disk is already being extended to actual size")
+   
                     lvm_extend_cmd = "sudo -u root lvextend -L +{}G {}".format(extend_by, lvm_path)
 
                     lvm_extend = subprocess.Popen(lvm_extend_cmd, stdout=subprocess.PIPE, shell=True)

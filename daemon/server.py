@@ -398,7 +398,7 @@ class Tasks(object):
         except Exception as e:
             raise Exception(e.message)
         return resp.send_json(result)
-
+    
     # def delete(self, task_id):
     #     if not task_id:
     #         raise HTTPBadRequest("Task id is required")
