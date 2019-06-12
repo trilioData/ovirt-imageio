@@ -186,7 +186,6 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                 log.error("Error in writing data to dest:{}".format(path))
                 raise Exception(exc.message)
             process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
-                
             if stderr:
                 log.error("Unable to change the backing file", dest, stderr)
         else:
@@ -221,10 +220,11 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                               meta={'Task': 'Disk copy to staging area Completed',
                                                     'disk_id': os.path.basename(path)})
                         except IOError as e:
-                            print("Unable to copy file. %s" % e)
-                            raise Exception(e.message)
+                            err = "Unable to copy file. Error: [{0}]".format(e)
+                            print(err)
+                            raise Exception(err)
                         except Exception as ex:
-                            error = "Unexpected error : [{0}]".format(ex.message)
+                            error = "Unexpected error : [{0}]".format(ex)
                             print(error)
                             raise Exception(error)
                     else:
@@ -239,8 +239,9 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                               meta={'Task': 'Disk copy to staging area Completed',
                                                     'disk_id': os.path.basename(path)})
                         except IOError as e:
-                            print("Unable to copy file. %s" % e)
-                            raise Exception(e.message)
+                            err = "Unable to copy file. Error: [{0}]".format(e)
+                            print(err)
+                            raise Exception(err)
                         except Exception as ex:
                             error = "Unexpected error: [{0}]".format(ex.message)
                             print(error)
@@ -437,10 +438,11 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
             except IOError as ex:
                 print ex
-                log.error("Unable to move temp file as temp file was never created. Exception: " + ex)
+                err = "Unable to move temp file as temp file was never created. Exception: [{0}]".format(ex)
+                log.error(err)
                 self.update_state(state='EXCEPTION',
-                                  meta={'exception': ex})
-                raise Exception(ex)
+                                  meta={'exception': err})
+                raise Exception(err)
 
             except Exception as ex:
                 print ex
