@@ -304,7 +304,7 @@ class Images(images.Handler):
                 raise http.Error(http.BAD_REQUEST, "Invalid Content-Length header: %r" % size)
 
             try:
-                ticket = auth.authorize(ticket_id, "read", offset, size)
+                ticket = auth.authorize(ticket_id, "read")
                 ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
@@ -338,7 +338,7 @@ class Images(images.Handler):
             offset = req.content_range.first if req.content_range else 0
 
             try:
-                ticket = auth.authorize(ticket_id, "read", offset, size)
+                ticket = auth.authorize(ticket_id, "read")
                 ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
