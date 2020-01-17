@@ -46,6 +46,7 @@ from ovirt_imageio_daemon import tickets
 from ovirt_imageio_daemon import auth
 from ovirt_imageio_daemon import profile
 from ovirt_imageio_daemon import images
+from ovirt_imageio_daemon import daemon_version
 
 from celery.task.control import revoke
 import celery_tasks
@@ -58,7 +59,9 @@ remote_service = None
 local_service = None
 control_service = None
 running = True
-
+high_version = int(daemon_version.string.split()[0])
+major_version = int(daemon_version.string.split()[1])
+minor_version = int(daemon_version.string.split()[2])
 
 def main(args):
     configure_logger()
@@ -304,7 +307,10 @@ class Images(images.Handler):
                 raise http.Error(http.BAD_REQUEST, "Invalid Content-Length header: %r" % size)
 
             try:
-                ticket = auth.authorize(ticket_id, "read")
+                if high_version >= 1 and major_version >=5 and minor_version >= 2:
+                    ticket = auth.authorize(ticket_id, "read")
+                else:
+                    ticket = auth.authorize(ticket_id, "read", offset, size)
                 ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
@@ -338,7 +344,10 @@ class Images(images.Handler):
             offset = req.content_range.first if req.content_range else 0
 
             try:
-                ticket = auth.authorize(ticket_id, "read")
+                if high_version >= 1 and major_version >=5 and minor_version >= 2:
+                    ticket = auth.authorize(ticket_id, "read")
+                else:
+                    ticket = auth.authorize(ticket_id, "read", offset, size)
                 ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
