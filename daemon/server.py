@@ -46,7 +46,7 @@ from ovirt_imageio_daemon import tickets
 from ovirt_imageio_daemon import auth
 from ovirt_imageio_daemon import profile
 from ovirt_imageio_daemon import images
-from ovirt_imageio_daemon import daemon_version
+from ovirt_imageio_daemon import version as daemon_version
 
 from celery.task.control import revoke
 import celery_tasks
@@ -59,9 +59,9 @@ remote_service = None
 local_service = None
 control_service = None
 running = True
-high_version = int(daemon_version.string.split()[0])
-major_version = int(daemon_version.string.split()[1])
-minor_version = int(daemon_version.string.split()[2])
+high_version = int(daemon_version.string.split(".")[0])
+major_version = int(daemon_version.string.split(".")[1])
+minor_version = int(daemon_version.string.split(".")[2])
 
 def main(args):
     configure_logger()
