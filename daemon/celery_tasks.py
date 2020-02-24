@@ -96,7 +96,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
         print('Take a full snapshot with qemu-img convert cmd: %s ' % cmd)
         self.update_state(state='PENDING',
                           meta={'Task': 'Starting Backup',
-                                'disk_id': basepath})
+                                'disk_id': basepath,
+                                'ticket_id': ticket_id})
         process = subprocess.Popen(cmdspec,
                                    stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE,
@@ -134,7 +135,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
 
                 self.update_state(state='PENDING',
                                   meta={'percentage': percentage,
-                                        'disk_id': basepath})
+                                        'disk_id': basepath,
+                                        'ticket_id': ticket_id})
 
             except Exception as ex:
                 print ex
@@ -181,7 +183,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                             percentage = "%.2f" % percentage
                             self.update_state(state='PENDING',
                                               meta={'percentage': percentage,
-                                                    'disk_id': basepath})
+                                                    'disk_id': basepath,
+                                                    'ticket_id': ticket_id})
             except Exception as exc:
                 log.error("Error in writing data to dest:{}".format(path))
                 raise Exception(exc.message)
@@ -193,7 +196,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
             try:
                 self.update_state(state='PENDING',
                                   meta={'Task': 'Copying manual snapshots to staging area',
-                                        'disk_id': basepath})
+                                        'disk_id': basepath,
+                                        'ticket_id': ticket_id})
                 temp_random_id = generate_random_string(5)
                 with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
                     sample_config = f.read()
@@ -210,7 +214,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                         try:
                             self.update_state(state='PENDING',
                                               meta={'Task': 'Copying manual snapshots to staging area',
-                                                    'disk_id': os.path.basename(path)})
+                                                    'disk_id': os.path.basename(path),
+                                                    'ticket_id': ticket_id})
                             shutil.copy(path, tempdir)
                             backing_file = os.path.basename(str(record.get('backing-filename', None)))
 
@@ -218,7 +223,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                             commands.append(command)
                             self.update_state(state='PENDING',
                                               meta={'Task': 'Disk copy to staging area Completed',
-                                                    'disk_id': os.path.basename(path)})
+                                                    'disk_id': os.path.basename(path),
+                                                    'ticket_id': ticket_id})
                         except IOError as e:
                             err = "Unable to copy file. Error: [{0}]".format(e)
                             print(err)
@@ -231,13 +237,15 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                         try:
                             self.update_state(state='PENDING',
                                               meta={'Task': 'Copying manual snapshots to staging area',
-                                                    'disk_id': os.path.basename(path)})
+                                                    'disk_id': os.path.basename(path),
+                                                    'ticket_id': ticket_id})
                             shutil.copy(path, tempdir)
                             command = 'qemu-img rebase -u ' + filename
                             commands.append(command)
                             self.update_state(state='PENDING',
                                               meta={'Task': 'Disk copy to staging area Completed',
-                                                    'disk_id': os.path.basename(path)})
+                                                    'disk_id': os.path.basename(path),
+                                                    'ticket_id': ticket_id})
                         except IOError as e:
                             err = "Unable to copy file. Error: [{0}]".format(e)
                             print(err)
@@ -257,7 +265,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                     raise Exception(stdout)
                 self.update_state(state='PENDING',
                                   meta={'Task': 'Starting backup process...',
-                                        'disk_id': basepath})
+                                        'disk_id': basepath,
+                                        'ticket_id': ticket_id})
                 cmdspec = [
                     'qemu-img',
                     'convert',
@@ -303,7 +312,8 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
 
                         self.update_state(state='PENDING',
                                           meta={'percentage': percentage,
-                                                'disk_id': basepath})
+                                                'disk_id': basepath,
+                                                'ticket_id': ticket_id})
 
                     except Exception as ex:
                         pass
@@ -364,7 +374,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         self.update_state(state='PENDING',
                           meta={'Task': 'Starting restore process',
-                                'disk_id': basepath})
+                                'disk_id': basepath,
+                                'ticket_id': ticket_id})
 
         print('transfer_qemu_image_to_volume cmd %s ' % cmd)
         process = subprocess.Popen(cmdspec,
@@ -398,7 +409,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                         self.update_state(state='PENDING',
                                           meta={'percentage': percentage,
-                                                'disk_id': basepath})
+                                                'disk_id': basepath,
+                                                'ticket_id': ticket_id})
 
         _returncode = process.returncode  # pylint: disable=E1101
         if _returncode:
@@ -415,14 +427,16 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             percentage = 100
             self.update_state(state='PENDING',
                               meta={'percentage': percentage,
-                                    'disk_id': basepath})
+                                    'disk_id': basepath,
+                                    'ticket_id': ticket_id})
 
         process.stdin.close()
 
         if backing_file:
             try:
                 self.update_state(state='PENDING',
-                                  meta={'status': 'Performing Rebase operation to point disk to its backing file'})
+                                  meta={'status': 'Performing Rebase operation to point disk to its backing file',
+                                        'ticket_id': ticket_id})
                 print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
                       'Volume format: [{2}]'.format(volume_path, backing_file, disk_format)
 
