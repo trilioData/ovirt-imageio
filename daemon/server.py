@@ -311,7 +311,7 @@ class Images(images.Handler):
                     ticket = auth.authorize(ticket_id, "read")
                 else:
                     ticket = auth.authorize(ticket_id, "read", offset, size)
-                ticket.extend(1800)
+                # ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
             self.log.debug("disk %s to %s for ticket %s",
@@ -348,7 +348,7 @@ class Images(images.Handler):
                     ticket = auth.authorize(ticket_id, "read")
                 else:
                     ticket = auth.authorize(ticket_id, "read", offset, size)
-                ticket.extend(1800)
+                # ticket.extend(1800)
             except errors.AuthorizationError as e:
                 raise http.Error(http.FORBIDDEN, str(e))
 
@@ -402,6 +402,10 @@ class Tasks(object):
             if isinstance(result, Exception):
                 result = {'Exception': result.message}
             result['status'] = ctasks.status
+            ticket_id = result.pop("ticket_id", None)
+            if ticket_id:
+                ticket = auth.get(ticket_id)
+                ticket.extend(10)
         except KeyError:
             raise http.Error(http.NOT_FOUND, "No such task %r" % task_id)
         except Exception as e:
