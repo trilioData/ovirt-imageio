@@ -283,22 +283,29 @@ class Images(images.Handler):
             raise http.Error(http.BAD_REQUEST, "Backup_path does not exists")
 
         # Check if Celery is running or not
-        celery_service_status = os.system("service ovirt_celery status")
-        if celery_service_status != 0:
-            self.log.info("Celery service is not running at the moment. Restarting...")
-            process = subprocess.Popen("sudo service ovirt_celery start",
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE,
-                                       shell=True)
-            stdout, stderr = process.communicate()
-            celery_service_status = os.system("service ovirt_celery status")
-            if celery_service_status != 0:
-                raise Exception(
-                    "Celery service is down and cannot be restarted at the moment due to: {}".format(stderr)
-                )
+        # celery_service_status = os.system("service ovirt_celery status")
+        # if celery_service_status != 0:
+        #     self.log.info("Celery service is not running at the moment. Restarting...")
+        #     process = subprocess.Popen("sudo service ovirt_celery start",
+        #                                stdout=subprocess.PIPE,
+        #                                stderr=subprocess.PIPE,
+        #                                shell=True)
+        #     stdout, stderr = process.communicate()
+        #     celery_service_status = os.system("service ovirt_celery status")
+        #     if celery_service_status != 0:
+        #         raise Exception(
+        #             "Celery service is down and cannot be restarted at the moment due to: {}".format(stderr)
+        #         )
 
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
+            from celery_tasks import app
+            inspect = app.control.inspect()
+            celery_ping_res = inspect.ping()
+            if not celery_ping_res:
+                err_msg = "Celery workers seems to be down at the moment. Unable to perform snapshot."\
+                    "Kindly contact your administrator."
+                raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
             offset = req.content_range.first if req.content_range else 0
             size = req.content_length
             if size is None:
@@ -336,6 +343,13 @@ class Images(images.Handler):
                 self.log.info("Submitting celery task raised: %r", exc)
             print "Submitted backup"
         elif methodargs['method'] == 'restore':
+            from celery_tasks import app
+            inspect = app.control.inspect()
+            celery_ping_res = inspect.ping()
+            if not celery_ping_res:
+                err_msg = "Celery workers seems to be down at the moment. Unable to perform restore." \
+                          "Kindly contact your administrator."
+                raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
             size = req.content_length
             if size is None:
                 raise http.Error(http.BAD_REQUEST, "Content-Length header is required")
