@@ -282,21 +282,6 @@ class Images(images.Handler):
         if not os.path.exists(destdir):
             raise http.Error(http.BAD_REQUEST, "Backup_path does not exists")
 
-        # Check if Celery is running or not
-        # celery_service_status = os.system("service ovirt_celery status")
-        # if celery_service_status != 0:
-        #     self.log.info("Celery service is not running at the moment. Restarting...")
-        #     process = subprocess.Popen("sudo service ovirt_celery start",
-        #                                stdout=subprocess.PIPE,
-        #                                stderr=subprocess.PIPE,
-        #                                shell=True)
-        #     stdout, stderr = process.communicate()
-        #     celery_service_status = os.system("service ovirt_celery status")
-        #     if celery_service_status != 0:
-        #         raise Exception(
-        #             "Celery service is down and cannot be restarted at the moment due to: {}".format(stderr)
-        #         )
-
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
             from celery_tasks import app
@@ -416,10 +401,6 @@ class Tasks(object):
             if isinstance(result, Exception):
                 result = {'Exception': result.message}
             result['status'] = ctasks.status
-            ticket_id = result.pop("ticket_id", None)
-            if ticket_id:
-                ticket = auth.get(ticket_id)
-                ticket.extend(10)
         except KeyError:
             raise http.Error(http.NOT_FOUND, "No such task %r" % task_id)
         except Exception as e:
