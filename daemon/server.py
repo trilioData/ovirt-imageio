@@ -393,6 +393,13 @@ class Tasks(object):
             raise http.Error(http.BAD_REQUEST, "Task id is required")
 
         self.log.info("Retrieving task %s", task_id)
+        from celery_tasks import app
+        inspect = app.control.inspect()
+        celery_ping_res = inspect.ping()
+        if not celery_ping_res:
+            err_msg = "Celery workers seems to be down at the moment. Unable to perform restore." \
+                      "Kindly contact your administrator."
+            raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
         result = {}
         try:
             ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
