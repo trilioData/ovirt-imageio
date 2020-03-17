@@ -487,6 +487,8 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             lvm_size = math.ceil(lvm_size / 1024)
         elif "G" in block_size:
             lvm_size = math.ceil(float(block_size.split('G')[0]))
+        elif "T" in block_size:
+            lvm_size = math.ceil(float(block_size.split('T')[0]) * 1024)
 
         return lvm_size
 
