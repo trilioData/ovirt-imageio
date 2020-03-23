@@ -258,6 +258,12 @@ class Images(images.Handler):
     def __init__(self, config):
         super(Images, self).__init__(config)
 
+    def check_celery_status(self):
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            return False
+        return True
+
     def post(self, req, resp, ticket_id):
         if not ticket_id:
             raise http.Error(http.BAD_REQUEST, "Ticket id is required")
@@ -284,12 +290,10 @@ class Images(images.Handler):
 
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
-            from celery_tasks import app
-            inspect = app.control.inspect()
-            celery_ping_res = inspect.ping()
-            if not celery_ping_res:
+            celery_status = self.check_celery_status()
+            if not celery_status:
                 err_msg = "Celery workers seems to be down at the moment. Unable to perform snapshot."\
-                    "Kindly contact your administrator."
+                    " Kindly contact your administrator."
                 raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
             offset = req.content_range.first if req.content_range else 0
             size = req.content_length
@@ -328,12 +332,10 @@ class Images(images.Handler):
                 self.log.info("Submitting celery task raised: %r", exc)
             print "Submitted backup"
         elif methodargs['method'] == 'restore':
-            from celery_tasks import app
-            inspect = app.control.inspect()
-            celery_ping_res = inspect.ping()
-            if not celery_ping_res:
+            celery_status = self.check_celery_status()
+            if not celery_status:
                 err_msg = "Celery workers seems to be down at the moment. Unable to perform restore." \
-                          "Kindly contact your administrator."
+                          " Kindly contact your administrator."
                 raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
             size = req.content_length
             if size is None:
@@ -388,17 +390,22 @@ class Tasks(object):
     def __init__(self, config):
         self.config = config
 
+    def check_celery_status(self):
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            return False
+        return True
+
     def get(self, req, resp, task_id):
         if not task_id:
             raise http.Error(http.BAD_REQUEST, "Task id is required")
 
         self.log.info("Retrieving task %s", task_id)
-        from celery_tasks import app
-        inspect = app.control.inspect()
-        celery_ping_res = inspect.ping()
-        if not celery_ping_res:
-            err_msg = "Celery workers seems to be down at the moment. Unable to perform restore." \
-                      "Kindly contact your administrator."
+        celery_status = self.check_celery_status()
+        if not celery_status:
+            err_msg = "Celery workers seems to be down at the moment. Unable to retrieve task " \
+                      " Kindly contact your administrator."
+            self.log.info(err_msg)
             raise http.Error(http.INTERNAL_SERVER_ERROR, err_msg)
         result = {}
         try:
