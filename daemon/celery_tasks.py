@@ -506,9 +506,13 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                     if extend_by + lvm_size_in_gb > actual_size:
                         log.info(
                             "No more space remained for doing the disk restore. Disk is already being extended to actual size")
-   
+                    self.update_state(state='PENDING',
+                                      meta={'status': 'Extending Block by {} GB'.format(extend_by),
+                                            'ticket_id': ticket_id})
                     lvm_extend_cmd = "sudo -u root lvextend -L +{}G {}".format(extend_by, lvm_path)
-
+                    self.update_state(state='PENDING',
+                                      meta={'status': 'Successfully Extended Block',
+                                            'ticket_id': ticket_id})
                     lvm_extend = subprocess.Popen(lvm_extend_cmd, stdout=subprocess.PIPE, shell=True)
                     stdout, stderr = lvm_extend.communicate()
                     if stderr:
@@ -520,10 +524,19 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                             lvm_size = __get_lvm_size_in_gb(stdout)
                             log.info("LVM size after extend: {}".format(lvm_size))
                 else:
+                    self.update_state(state='PENDING',
+                                      meta={'status': 'Error Extending Block',
+                                            'ticket_id': ticket_id})
                     log.info("LVM size is already larger than restore size. No need to extend the disk")
             else:
+                self.update_state(state='PENDING',
+                                      meta={'status': 'Error Extending Block',
+                                            'ticket_id': ticket_id})
                 log.info("Snapshot restore size or actual size of VM is None. Skipping LVM block extend..")
         else:
+            self.update_state(state='PENDING',
+                                      meta={'status': 'Error Extending Block',
+                                            'ticket_id': ticket_id})
             log.error("error getting actual size of the lvm block")
 
     transfer_qemu_image_to_volume(volume_path, backup_image_file_path, disk_format)
