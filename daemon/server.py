@@ -330,7 +330,7 @@ class Images(images.Handler):
                                                         })
             except celery_tasks.backup.OperationalError as exc:
                 self.log.info("Submitting celery task raised: %r", exc)
-            print "Submitted backup"
+            self.log.info("Backup Job Submitted")
         elif methodargs['method'] == 'restore':
             celery_status = self.check_celery_status()
             if not celery_status:
@@ -373,7 +373,7 @@ class Images(images.Handler):
                                                     })
             except celery_tasks.backup.OperationalError as exc:
                 self.log.info("Submitting celery task raised: %r", exc)
-            print "Submitted restore"
+            self.log.info("Restore Job Submitted")
         else:
             raise http.Error(http.BAD_REQUEST, "Invalid method")
         resp.status_code = 206

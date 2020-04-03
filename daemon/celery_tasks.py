@@ -181,16 +181,21 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                             copied += len(buf)
                             percentage = float(copied) / size * 100
                             percentage = "%.2f" % percentage
+                            print('{} percent disk copy completed'.format(percentage))
                             self.update_state(state='PENDING',
                                               meta={'percentage': percentage,
                                                     'disk_id': basepath,
                                                     'ticket_id': ticket_id})
             except Exception as exc:
-                log.error("Error in writing data to dest:{}".format(path))
+                print("Error in writing data to dest:{}".format(path))
                 raise Exception(exc.message)
-            process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
+            print("Performing qemu rebase on disk {}, Setting backing file as: {}".format(dest, recent_snap_path))
+            process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+            stdout, stderr = process.communicate()
             if stderr:
-                log.error("Unable to change the backing file", dest, stderr)
+                err = "Unable to change the backing file:{} error: {}".format(dest, stderr)
+                print(err)
+                raise Exception(err)
         else:
             tempdir = None
             try:
@@ -216,9 +221,10 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                               meta={'Task': 'Copying manual snapshots to staging area',
                                                     'disk_id': os.path.basename(path),
                                                     'ticket_id': ticket_id})
+                            print("Coping file: {} to staging area.".format(path))
                             shutil.copy(path, tempdir)
                             backing_file = os.path.basename(str(record.get('backing-filename', None)))
-
+                            print("Copy to staging area completed. Rebasing file: {} with backing file:{}".format(filename, backing_file))
                             command = 'qemu-img rebase -u -b ' + backing_file + ' ' + filename
                             commands.append(command)
                             self.update_state(state='PENDING',
@@ -239,8 +245,10 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                                               meta={'Task': 'Copying manual snapshots to staging area',
                                                     'disk_id': os.path.basename(path),
                                                     'ticket_id': ticket_id})
+                            print("Coping file: {} to staging area.".format(path))
                             shutil.copy(path, tempdir)
                             command = 'qemu-img rebase -u ' + filename
+                            print("Copy to staging area completed. Its the Final disk.")
                             commands.append(command)
                             self.update_state(state='PENDING',
                                               meta={'Task': 'Disk copy to staging area Completed',
@@ -257,12 +265,13 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                         break
                     path = str(record.get('full-backing-filename'))
                 string_commands = ";".join(str(x) for x in commands)
-                process = subprocess.Popen(string_commands, stdin=subprocess.PIPE, stdout=subprocess.PIPE
-                                           , cwd=tempdir, shell=True)
+                process = subprocess.Popen(string_commands, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           cwd=tempdir, shell=True)
                 stdout, stderr = process.communicate()
                 if stderr:
+                    print("Unable to perform operation. Error: {}".format(stderr))
                     shutil.rmtree(tempdir)
-                    raise Exception(stdout)
+                    raise Exception(stderr)
                 self.update_state(state='PENDING',
                                   meta={'Task': 'Starting backup process...',
                                         'disk_id': basepath,
@@ -275,6 +284,7 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                 filename = os.path.basename(str(first_record.get('filename', None)))
                 path = os.path.join(tempdir, filename)
                 cmdspec += ['-O', 'qcow2', path, dest]
+                print("Executing cmd: {}", format(cmdspec))
                 process = subprocess.Popen(cmdspec,
                                            stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE,
@@ -318,10 +328,13 @@ def backup(self, ticket_id, path, dest, size, type, buffer_size, recent_snap_id)
                     except Exception as ex:
                         pass
                 if recent_snap_path:
-                    process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, shell=True)
+                    print("Performing qemu rebase on disk {}, Setting backing file as: {}".format(dest, recent_snap_path))
+                    process = subprocess.Popen('qemu-img rebase -u -b ' + recent_snap_path + ' ' + dest, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
                     stdout, stderr = process.communicate()
                     if stderr:
-                        log.error("Unable to change the backing file", dest, stderr)
+                        err = "Unable to change the backing file:{} error: {}".format(dest, stderr)
+                        print(err)
+                        raise Exception(err)
             finally:
                 if tempdir:
                     if os.path.exists(tempdir):
@@ -338,9 +351,14 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
         # Get Backing file if present for current disk.
         qemu_cmd = ["qemu-img", "info", "--output", "json", volume_path]
-        qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE)
-        data, err = qemu_process.communicate()
-        data = json.loads(data)
+        print("Executing cmd: {}", format(qemu_cmd))
+        qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        stdout, stderr = qemu_process.communicate()
+        if stderr:
+            print("Unable to get backing file info. Error: {}".format(stderr))
+            raise Exception(stderr)
+        
+        data = json.loads(stdout)
         backing_file = data.get("backing-filename", None)
 
         log_msg = 'Qemu info for [{0}] : [{1}]. Backing Path: [{2}]'.format(volume_path, data, backing_file)
@@ -493,7 +511,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
         return lvm_size
 
     if is_blk_device(volume_path):
-        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
+        lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         stdout, stderr = lvm_info.communicate()
         if not stderr:
             log.info("STDOUT: {}".format(stdout))
