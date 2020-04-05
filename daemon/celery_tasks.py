@@ -357,7 +357,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
             disk_format):
 
         # Get Backing file if present for current disk.
-        qemu_cmd = ["qemu-img", "info", "--output", "json", volume_path]
+        qemu_cmd = "qemu-img info --output json {}".format(volume_path)
         print("Executing cmd: {}", format(qemu_cmd))
         qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         stdout, stderr = qemu_process.communicate()
@@ -467,7 +467,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 basedir = os.path.dirname(volume_path)
 
-                process = subprocess.Popen('qemu-img info --output json ' + backing_file, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+                process = subprocess.Popen('qemu-img info --output json {}'.format(backing_file), stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
                 stdout, stderr = process.communicate()
                 backing_file_format = "qcow2"
                 if stderr:
@@ -478,6 +478,7 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
 
                 process = subprocess.Popen('qemu-img rebase -u -f qcow2 -F {} -b {} {}'.format(backing_file_format, backing_file, target),
                                            stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE,
                                            cwd=basedir, shell=True)
                 stdout, stderr = process.communicate()
                 if stderr:
