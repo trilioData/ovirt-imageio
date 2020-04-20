@@ -462,24 +462,35 @@ def restore(self, ticket_id, volume_path, backup_image_file_path, disk_format, s
                 self.update_state(state='PENDING',
                                   meta={'status': 'Performing Rebase operation to point disk to its backing file',
                                         'ticket_id': ticket_id})
-                print 'Rebasing volume: [{0}] to backing file: [{1}]. ' \
-                      'Volume format: [{2}]'.format(volume_path, backing_file, disk_format)
 
                 basedir = os.path.dirname(volume_path)
 
+                # backing_file = "{}/{}".format(basedir, backing_file) # In Case if required
+
+                log.info('Rebasing volume: [{0}] to backing file: [{1}]. ' \
+                      'Volume format: [{2}]'.format(volume_path, backing_file, disk_format))
+
                 process = subprocess.Popen('qemu-img info --output json {}'.format(backing_file), stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
                 stdout, stderr = process.communicate()
-                backing_file_format = "qcow2"
+                backing_file_format = None
                 if stderr:
-                    print("Error in qemu-img info operation: {}".format(stderr))
+                    log.info("Error in qemu-img info operation: {}".format(stderr))
                 else:
                     result = json.loads(stdout)
-                    backing_file_format = result.get("format", "qcow2")
+                    backing_file_format = result.get("format")
 
-                process = subprocess.Popen('qemu-img rebase -u -f qcow2 -F {} -b {} {}'.format(backing_file_format, backing_file, target),
-                                           stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE,
-                                           cwd=basedir, shell=True)
+                if backing_file_format:
+                    log.info("Setting backing file format to {}", backing_file_format)
+                    process = subprocess.Popen('qemu-img rebase -u -f qcow2 -F {} -b {} {}'.format(backing_file_format, backing_file, target),
+                                            stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE,
+                                            cwd=basedir, shell=True)
+                else:
+                    log.info("Not able to pull any backing file format.")
+                    process = subprocess.Popen('qemu-img rebase -u -f qcow2 -b {} {}'.format(backing_file, target),
+                                            stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE,
+                                            cwd=basedir, shell=True)
                 stdout, stderr = process.communicate()
                 if stderr:
                     error = "Unable to change the backing file " + volume_path + " " + stderr
