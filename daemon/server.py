@@ -30,6 +30,7 @@ from webob.exc import (
     HTTPBadRequest,
     HTTPNotFound,
 )
+from celery.task.control import revoke
 
 from ovirt_imageio_common import configloader
 from ovirt_imageio_common import directio
@@ -47,6 +48,7 @@ from ovirt_imageio_daemon import tickets
 from ovirt_imageio_daemon import wsgi
 from ovirt_imageio_daemon import profile
 
+
 import celery_tasks
 import nfs_mount
 
@@ -57,7 +59,9 @@ remote_service = None
 local_service = None
 control_service = None
 running = True
-
+high_version = int(daemon_version.string.split(".")[0])
+major_version = int(daemon_version.string.split(".")[1])
+minor_version = int(daemon_version.string.split(".")[2])
 
 def main(args):
     configure_logger()
@@ -189,6 +193,12 @@ class Images(imageio_server.Images):
     def __init__(self, config, request, clock=None):
         super(Images, self).__init__(config, request, clock)
 
+    def check_celery_status(self):
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            return False
+        return True
+
     def post(self, ticket_id):
         if not ticket_id:
             raise HTTPBadRequest("Ticket id is required")
@@ -213,32 +223,32 @@ class Images(imageio_server.Images):
         if not os.path.exists(destdir):
             raise HTTPBadRequest("Backup_path does not exists")
 
-        # Check if Celery is running or not
-        celery_service_status = os.system("service ovirt_celery status")
-        if celery_service_status != 0:
-            self.log.info("Celery service is not running at the moment. Restarting...")
-            process = subprocess.Popen("sudo service ovirt_celery start",
-                                       stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE,
-                                       shell=True)
-            stdout, stderr = process.communicate()
-            celery_service_status = os.system("service ovirt_celery status")
-            if celery_service_status != 0:
-                raise Exception(
-                    "Celery service is down and cannot be restarted at the moment due to: {}".format(stderr)
-                )
-
         # TODO: cancel copy if ticket expired or revoked
         if methodargs['method'] == 'backup':
+            celery_status = self.check_celery_status()
+            if not celery_status:
+                err_msg = "Celery workers seems to be down at the moment. Unable to perform snapshot." \
+                          " Kindly contact your administrator."
+                raise Exception(err_msg)
             offset = 0
             size = None
             if self.request.range:
                 offset = self.request.range.start
                 if self.request.range.end is not None:
                     size = self.request.range.end - offset
+            if size is None:
+                raise HTTPBadRequest("Content-Length header is required")
+            if size < 0:
+                raise HTTPBadRequest("Invalid Content-Length header: %r" % size)
 
-            ticket = tickets.authorize(ticket_id, "read", 0, size)
-            ticket.extend(1800)
+            try:
+                if high_version >= 1 and major_version >=5 and minor_version >= 2:
+                    ticket = tickets.authorize(ticket_id, "read")
+                else:
+                    ticket = tickets.authorize(ticket_id, "read", offset, size)
+                # ticket.extend(1800)
+            except errors.AuthorizationError as e:
+                raise Exception(e.message)
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
             try:
@@ -259,8 +269,13 @@ class Images(imageio_server.Images):
                                                         })
             except celery_tasks.backup.OperationalError as exc:
                 self.log.info("Submitting celery task raised: %r", exc)
-            print "Submitted backup"
+            self.log.info("Backup Job Submitted")
         elif methodargs['method'] == 'restore':
+            celery_status = self.check_celery_status()
+            if not celery_status:
+                err_msg = "Celery workers seems to be down at the moment. Unable to perform restore." \
+                          " Kindly contact your administrator."
+                raise Exception(err_msg)
             size = self.request.content_length
             if size is None:
                 raise HTTPBadRequest("Content-Length header is required")
@@ -268,9 +283,14 @@ class Images(imageio_server.Images):
                 raise HTTPBadRequest("Invalid Content-Length header: %r" % size)
             content_range = web.content_range(self.request)
             offset = content_range.start or 0
-
-            ticket = tickets.authorize(ticket_id, "write", offset, size)
-            ticket.extend(1800)
+            try:
+                if high_version >= 1 and major_version >=5 and minor_version >= 2:
+                    ticket = tickets.authorize(ticket_id, "read")
+                else:
+                    ticket = tickets.authorize(ticket_id, "read", offset, size)
+                # ticket.extend(1800)
+            except errors.AuthorizationError as e:
+                raise Exception(e.message)
 
             self.log.debug("disk %s to %s for ticket %s",
                            body, ticket.url.path, ticket_id)
@@ -280,8 +300,9 @@ class Images(imageio_server.Images):
                                                     methodargs['backup_path'],
                                                     methodargs['disk_format'],
                                                     tickets.get(ticket_id).size,
-                                                    self.config.daemon.buffer_size),
-                                                    #queue='restore_tasks',
+                                                    self.config.daemon.buffer_size,
+                                                    methodargs['restore_size'],
+                                                    methodargs['actual_size']),
                                                     retry = True,
                                                     retry_policy={
                                                         'max_retries': 3,
@@ -291,7 +312,7 @@ class Images(imageio_server.Images):
                                                     })
             except celery_tasks.backup.OperationalError as exc:
                 self.log.info("Submitting celery task raised: %r", exc)
-            print "Submitted restore"
+            self.log.info("Restore Job Submitted")
         else:
             raise HTTPBadRequest("Invalid method")
 
@@ -310,16 +331,46 @@ class Tasks(object):
         self.request = request
         self.clock = clock
 
+    def check_celery_status(self):
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            return False
+        return True
+
     def get(self, task_id):
         if not task_id:
             raise HTTPBadRequest("Task id is required")
 
         self.log.info("Retrieving task %s", task_id)
+        celery_status = self.check_celery_status()
+        if not celery_status:
+            err_msg = "Celery workers seems to be down at the moment. Unable to retrieve task " \
+                      " Kindly contact your administrator."
+            self.log.info(err_msg)
+            raise Exception(err_msg)
         result = {}
         try:
             ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
             if ctasks.result:
                 result = ctasks.result
+            if isinstance(result, Exception):
+                result = {'Exception': result.message}
+            result['status'] = ctasks.status
+        except KeyError:
+            raise HTTPNotFound("No such task %r" % task_id)
+        except Exception as e:
+            raise Exception(e.message)
+        return response(payload=result)
+
+    def delete(self, task_id):
+        if not task_id:
+            raise HTTPBadRequest("Task id is required")
+
+        self.log.info("Stopping execution of task with id: %s", task_id)
+        result = {}
+        try:
+            result = revoke(task_id, terminate=True)
+            ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
             if isinstance(result, Exception):
                 result = {'Exception': result.message}
             result['status'] = ctasks.status

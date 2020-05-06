@@ -7,6 +7,7 @@ import logging.config
 
 log = logging.getLogger("server")
 
+
 def is_online(nfsshare):
     status = False
     try:
@@ -25,6 +26,7 @@ def is_online(nfsshare):
 
     return status
 
+
 def is_mounted(nfsshare, mountpath):
     '''Make sure backup endpoint is mounted at mount_path'''
   
@@ -37,9 +39,10 @@ def is_mounted(nfsshare, mountpath):
 
     return len(mounts) and mounts[0].get(mountpath, None) == nfsshare
 
+
 def mount_backup_target(nfsshare, mountpath):
     if is_online(nfsshare):
-        command = ['sudo', 'mount', nfsshare, mountpath]
+        command = ['sudo', 'mount', '-t', 'nfs', '-o', 'rw,nolock,soft,intr,timeo=180,vers=3', nfsshare, mountpath]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
         stdout, stderr = process.communicate()
         if stderr:
