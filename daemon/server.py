@@ -47,7 +47,7 @@ from ovirt_imageio_daemon import uhttp
 from ovirt_imageio_daemon import tickets
 from ovirt_imageio_daemon import wsgi
 from ovirt_imageio_daemon import profile
-
+from ovirt_imageio_daemon import version as daemon_version
 
 import celery_tasks
 import nfs_mount
@@ -230,12 +230,13 @@ class Images(imageio_server.Images):
                 err_msg = "Celery workers seems to be down at the moment. Unable to perform snapshot." \
                           " Kindly contact your administrator."
                 raise Exception(err_msg)
-            offset = 0
-            size = None
-            if self.request.range:
-                offset = self.request.range.start
-                if self.request.range.end is not None:
-                    size = self.request.range.end - offset
+            size = self.request.content_length
+            if size is None:
+                raise HTTPBadRequest("Content-Length header is required")
+            if size < 0:
+                raise HTTPBadRequest("Invalid Content-Length header: %r" % size)
+            content_range = web.content_range(self.request)
+            offset = content_range.start or 0
             if size is None:
                 raise HTTPBadRequest("Content-Length header is required")
             if size < 0:
