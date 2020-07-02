@@ -4,7 +4,7 @@
 from flask import Blueprint, request, send_from_directory
 from flask.views import MethodView
 from webob import exc
-from ovirt_utils import backup
+from celery_tasks import backup
 tvm_blueprint = Blueprint("tvm_blueprint", __name__, url_prefix="/v1/admin")
 
 
