@@ -4,7 +4,7 @@ CELERYD_NODES="worker1 worker2 worker3 worker4"
 # or we could have three nodes:
 #CELERYD_NODES="w1 w2 w3"
 # Absolute or relative path to the 'celery' command:
-CELERY_BIN="/opt/ovirt-imageio/bin/celery"
+CELERY_BIN="/opt/ovirt-imageio/daemon/datamover/venv/bin/celery"
 
 #CELERYD_CHDIR="/opt/Myproject/"
 # App instance to use

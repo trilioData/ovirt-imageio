@@ -91,7 +91,82 @@ def get_recent_snapshot(recent_snap_id, src_path):
     return result, first_record, first_record_backing_file, recent_snap_path
 
 
-def download_full_snapshot(src_path, dest_path, ticket_id):
+
+def download_incremental_snapshot(self, src_path, dest_path, ticket_id):
+    basepath = os.path.basename(src_path)
+
+    cmdspec = [
+        'cp',
+        src_path,
+        dest_path,
+    ]
+    # cmdspec += ['-O', 'qcow2', src_path, dest_path]
+    cmd = " ".join(cmdspec)
+    print(('Take a Incremental snapshot with cp cmd: %s ' % cmd))
+    self.update_state(state='PENDING',
+                      meta={'Task': 'Starting Backup',
+                            'disk_id': basepath,
+                            'ticket_id': ticket_id})
+    process = subprocess.Popen(cmdspec,
+                               stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               bufsize=-1,
+                               close_fds=True,
+                               shell=False)
+
+    queue = Queue()
+    read_thread = Thread(target=enqueue_output,
+                         args=(process.stdout, queue))
+
+    read_thread.daemon = True  # thread dies with the program
+    read_thread.start()
+
+    percentage = 0.0
+    while process.poll() is None:
+        time.sleep(5)
+        print("sleeping 5 sec")
+        continue
+        # try:
+        #     try:
+        #         output = queue.get(timeout=300)
+        #     except Empty:
+        #         print("Error in queue.get()")
+        #         continue
+        #     except Exception as ex:
+        #         print("Error in queue.get()")
+        #         print(ex)
+        #
+        #     print(f" op {output.decode('utf-8')}")
+        #     # percentage = re.search(r'\d+\.\d+', output.decode('utf-8')).group(0)
+        #     percentage = output.decode('utf-8')
+        #     message = (("copying from %(path)s to "
+        #             "%(dest)s %(percentage)s %% completed\n") %
+        #            {'path': src_path,
+        #             'dest': dest_path,
+        #             'percentage': str(percentage)})
+        #     print(message)
+        #
+        #     # percentage = float(percentage)
+        #     self.update_state(state='PENDING',
+        #                       meta={'percentage': percentage,
+        #                             'disk_id': basepath,
+        #                             'ticket_id': ticket_id})
+        #
+        # except Exception as ex:
+        #     print(ex)
+        #     pass
+
+    _returncode = process.returncode  # pylint: disable=E1101
+    if _returncode:
+        print(('Result was %s' % _returncode))
+        raise Exception("Execution error %(exit_code)d (%(stderr)s). "
+                        "cmd %(cmd)s" %
+                        {'exit_code': _returncode,
+                         'stderr': process.stderr.read(),
+                         'cmd': cmd})
+
+def download_full_snapshot(self, src_path, dest_path, ticket_id):
     basepath = os.path.basename(src_path)
 
     cmdspec = [
@@ -102,10 +177,10 @@ def download_full_snapshot(src_path, dest_path, ticket_id):
     cmdspec += ['-O', 'qcow2', src_path, dest_path]
     cmd = " ".join(cmdspec)
     print(('Take a full snapshot with qemu-img convert cmd: %s ' % cmd))
-    # self.update_state(state='PENDING',
-    #                   meta={'Task': 'Starting Backup',
-    #                         'disk_id': basepath,
-    #                         'ticket_id': ticket_id})
+    self.update_state(state='PENDING',
+                      meta={'Task': 'Starting Backup',
+                            'disk_id': basepath,
+                            'ticket_id': ticket_id})
     process = subprocess.Popen(cmdspec,
                                stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE,
@@ -136,17 +211,18 @@ def download_full_snapshot(src_path, dest_path, ticket_id):
             print(f" op {output.decode('utf-8')}")
             # percentage = re.search(r'\d+\.\d+', output.decode('utf-8')).group(0)
             percentage = output.decode('utf-8')
-            print((("copying from %(path)s to "
+            message = (("copying from %(path)s to "
                     "%(dest)s %(percentage)s %% completed\n") %
                    {'path': src_path,
                     'dest': dest_path,
-                    'percentage': str(percentage)}))
+                    'percentage': str(percentage)})
+            print(message)
 
             # percentage = float(percentage)
-            # self.update_state(state='PENDING',
-            #                   meta={'percentage': percentage,
-            #                         'disk_id': basepath,
-            #                         'ticket_id': ticket_id})
+            self.update_state(state='PENDING',
+                              meta={'percentage': percentage,
+                                    'disk_id': basepath,
+                                    'ticket_id': ticket_id})
 
         except Exception as ex:
             print(ex)
@@ -161,15 +237,17 @@ def download_full_snapshot(src_path, dest_path, ticket_id):
                          'stderr': process.stderr.read(),
                          'cmd': cmd})
 
-def perform_staging_operation(result,src_path,dest_path, first_record,recent_snap_path, recent_snap_ids ):
+def perform_staging_operation(self, result,src_path,dest_path, first_record,recent_snap_path, recent_snap_ids, ticket_id ):
     tempdir = None
     path = src_path
     dest = dest_path
+    basepath = os.path.basename(src_path)
+
     try:
-        # self.update_state(state='PENDING',
-        #                   meta={'Task': 'Copying manual snapshots to staging area',
-        #                         'disk_id': basepath,
-        #                         'ticket_id': ticket_id})
+        self.update_state(state='PENDING',
+                          meta={'Task': 'Copying manual snapshots to staging area',
+                                'disk_id': basepath,
+                                'ticket_id': ticket_id})
         temp_random_id = generate_random_string(5)
         # with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
         #     sample_config = f.read()
@@ -227,10 +305,10 @@ def perform_staging_operation(result,src_path,dest_path, first_record,recent_sna
                         commands.append(command)
                     else:
                         print("Its a RAW format disk cannot be rebased")
-                    # self.update_state(state='PENDING',
-                    #                   meta={'Task': 'Disk copy to staging area Completed',
-                    #                         'disk_id': os.path.basename(path),
-                    #                         'ticket_id': ticket_id})
+                    self.update_state(state='PENDING',
+                                      meta={'Task': 'Disk copy to staging area Completed',
+                                            'disk_id': os.path.basename(path),
+                                            'ticket_id': ticket_id})
                 except IOError as e:
                     err = "Unable to copy file. Error: [{0}]".format(e)
                     print(err)
@@ -250,10 +328,10 @@ def perform_staging_operation(result,src_path,dest_path, first_record,recent_sna
             print(("Unable to perform operation. Error: {}".format(stderr)))
             shutil.rmtree(tempdir)
             raise Exception(stderr)
-        # self.update_state(state='PENDING',
-        #                   meta={'Task': 'Starting backup process...',
-        #                         'disk_id': basepath,
-        #                         'ticket_id': ticket_id})
+        self.update_state(state='PENDING',
+                          meta={'Task': 'Starting backup process...',
+                                'disk_id': basepath,
+                                'ticket_id': ticket_id})
         cmdspec = [
             'qemu-img',
             'convert',
@@ -298,10 +376,10 @@ def perform_staging_operation(result,src_path,dest_path, first_record,recent_sna
                         'percentage': str(percentage)}))
 
                 print(f"staging .....{percentage}")
-                # self.update_state(state='PENDING',
-                #                   meta={'percentage': percentage,
-                #                         'disk_id': basepath,
-                #                         'ticket_id': ticket_id})
+                self.update_state(state='PENDING',
+                                  meta={'percentage': percentage,
+                                        'disk_id': basepath,
+                                        'ticket_id': ticket_id})
 
             except Exception as ex:
                 pass
@@ -320,12 +398,12 @@ def perform_staging_operation(result,src_path,dest_path, first_record,recent_sna
                 shutil.rmtree(tempdir)
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.backup")
-def backup(download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticket_id):
+def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticket_id):
     src_path = get_source_path_from_ticket(backup_dest_path, ticket_id)
     print('Backup type: [{0}]'.format(snapshot_type))
     if snapshot_type == "full":
         print("performing full")
-        download_full_snapshot(src_path, backup_dest_path, ticket_id)
+        download_full_snapshot(self, src_path, backup_dest_path, ticket_id)
         print("performed full")
     else:
         src_qemu_info, first_record, first_record_backing_file, recent_snap_path = get_recent_snapshot(recent_snap_ids, src_path)
@@ -334,17 +412,18 @@ def backup(download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticke
             # if first_record_backing_file and recent_snap_path:
             try:
                 # We must use the daemon for downloading a backup disk.
-                print(f"transfer url {download_url}... starting download")
-                with ui.ProgressBar() as pb:
-                    client.download(
-                        download_url,
-                        backup_dest_path,
-                        "ca.pem",
-                        # incremental=incremental,
-                        secure=False,
-                        progress=pb)
+                print(f"transfer url {download_url}... starting download cp")
+                download_incremental_snapshot(self, src_path, backup_dest_path, ticket_id)
+                # with ui.ProgressBar() as pb:
+                #     client.download(
+                #         download_url,
+                #         backup_dest_path,
+                #         "ca.pem",
+                #         # incremental=incremental,
+                #         secure=False,
+                #         progress=pb)
             finally:
-                print(f"Done downloading snapshot to path {backup_dest_path}")
+                print(f"Done downloading snapshot to path through client {backup_dest_path}")
             dest_file_format = first_record.get('format', 'qcow2')
             print(("Performing qemu rebase on disk(format) {}({}), Setting backing file(format) as: {}(qcow2)".format(
                 backup_dest_path,
@@ -356,9 +435,9 @@ def backup(download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticke
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
             stdout, stderr = process.communicate()
             if stderr:
-                err = "Unable to change the backing file:{} error: {}".format(backup_dest_path, stderr)
+                err = "Unable to change the backing file:{} ,recent snap path {}, error: {}".format(backup_dest_path, recent_snap_path, stderr)
                 print(err)
                 raise Exception(err)
         else:
             print("perform staging area tasks")
-            perform_staging_operation(src_qemu_info, src_path, backup_dest_path, first_record, recent_snap_path, recent_snap_ids  )
+            perform_staging_operation(self, src_qemu_info, src_path, backup_dest_path, first_record, recent_snap_path, recent_snap_ids,  ticket_id)
