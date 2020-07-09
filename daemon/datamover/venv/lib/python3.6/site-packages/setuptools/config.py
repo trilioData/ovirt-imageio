@@ -1,62 +1,14 @@
 from __future__ import absolute_import, unicode_literals
-import ast
 import io
 import os
 import sys
-
-import warnings
-import functools
-import importlib
 from collections import defaultdict
 from functools import partial
-from functools import wraps
-import contextlib
+from importlib import import_module
 
 from distutils.errors import DistutilsOptionError, DistutilsFileError
 from setuptools.extern.packaging.version import LegacyVersion, parse
-from setuptools.extern.packaging.specifiers import SpecifierSet
-from setuptools.extern.six import string_types, PY3
-
-
-__metaclass__ = type
-
-
-class StaticModule:
-    """
-    Attempt to load the module by the name
-    """
-    def __init__(self, name):
-        spec = importlib.util.find_spec(name)
-        with open(spec.origin) as strm:
-            src = strm.read()
-        module = ast.parse(src)
-        vars(self).update(locals())
-        del self.self
-
-    def __getattr__(self, attr):
-        try:
-            return next(
-                ast.literal_eval(statement.value)
-                for statement in self.module.body
-                if isinstance(statement, ast.Assign)
-                for target in statement.targets
-                if isinstance(target, ast.Name) and target.id == attr
-            )
-        except Exception:
-            raise AttributeError(
-                "{self.name} has no attribute {attr}".format(**locals()))
-
-
-@contextlib.contextmanager
-def patch_path(path):
-    """
-    Add path to front of sys.path for the duration of the context.
-    """
-    try:
-        sys.path.insert(0, path)
-        yield
-    finally:
-        sys.path.remove(path)
+from setuptools.extern.six import string_types
 
 
 def read_configuration(
@@ -106,18 +58,6 @@ def read_configuration(
     return configuration_to_dict(handlers)
 
 
-def _get_option(target_obj, key):
-    """
-    Given a target object and option key, get that option from
-    the target object, either through a get_{key} method or
-    from an attribute directly.
-    """
-    getter_name = 'get_{key}'.format(**locals())
-    by_attribute = functools.partial(getattr, target_obj, key)
-    getter = getattr(target_obj, getter_name, by_attribute)
-    return getter()
-
-
 def configuration_to_dict(handlers):
     """Returns configuration data gathered by given handlers as a dict.
 
@@ -129,9 +69,20 @@ def configuration_to_dict(handlers):
     config_dict = defaultdict(dict)
 
     for handler in handlers:
+
+        obj_alias = handler.section_prefix
+        target_obj = handler.target_obj
+
         for option in handler.set_options:
-            value = _get_option(handler.target_obj, option)
-            config_dict[handler.section_prefix][option] = value
+            getter = getattr(target_obj, 'get_%s' % option, None)
+
+            if getter is None:
+                value = getattr(target_obj, option)
+
+            else:
+                value = getter()
+
+            config_dict[obj_alias][option] = value
 
     return config_dict
 
@@ -156,14 +107,13 @@ def parse_configuration(
     options.parse()
 
     meta = ConfigMetadataHandler(
-        distribution.metadata, command_options, ignore_option_errors,
-        distribution.package_dir)
+        distribution.metadata, command_options, ignore_option_errors, distribution.package_dir)
     meta.parse()
 
     return meta, options
 
 
-class ConfigHandler:
+class ConfigHandler(object):
     """Handles metadata supplied in configuration files."""
 
     section_prefix = None
@@ -288,26 +238,6 @@ class ConfigHandler:
         return value in ('1', 'true', 'yes')
 
     @classmethod
-    def _exclude_files_parser(cls, key):
-        """Returns a parser function to make sure field inputs
-        are not files.
-
-        Parses a value after getting the key so error messages are
-        more informative.
-
-        :param key:
-        :rtype: callable
-        """
-        def parser(value):
-            exclude_directive = 'file:'
-            if value.startswith(exclude_directive):
-                raise ValueError(
-                    'Only strings are accepted for the {0} field, '
-                    'files are not accepted'.format(key))
-            return value
-        return parser
-
-    @classmethod
     def _parse_file(cls, value):
         """Represents value as a string, allowing including text
         from nearest files using `file:` directive.
@@ -316,6 +246,7 @@ class ConfigHandler:
         directory with setup.py.
 
         Examples:
+            file: LICENSE
             file: README.rst, CHANGELOG.md, src/file.txt
 
         :param str value:
@@ -384,16 +315,15 @@ class ConfigHandler:
             elif '' in package_dir:
                 # A custom parent directory was specified for all root modules
                 parent_path = os.path.join(os.getcwd(), package_dir[''])
+        sys.path.insert(0, parent_path)
+        try:
+            module = import_module(module_name)
+            value = getattr(module, attr_name)
 
-        with patch_path(parent_path):
-            try:
-                # attempt to load value statically
-                return getattr(StaticModule(module_name), attr_name)
-            except Exception:
-                # fallback to simple import
-                module = importlib.import_module(module_name)
+        finally:
+            sys.path = sys.path[1:]
 
-        return getattr(module, attr_name)
+        return value
 
     @classmethod
     def _get_parser_compound(cls, *parse_methods):
@@ -455,7 +385,7 @@ class ConfigHandler:
 
             section_parser_method = getattr(
                 self,
-                # Dots in section names are translated into dunderscores.
+                # Dots in section names are tranlsated into dunderscores.
                 ('parse_section%s' % method_postfix).replace('.', '__'),
                 None)
 
@@ -465,20 +395,6 @@ class ConfigHandler:
                         self.section_prefix, section_name))
 
             section_parser_method(section_options)
-
-    def _deprecated_config_handler(self, func, msg, warning_class):
-        """ this function will wrap around parameters that are deprecated
-
-        :param msg: deprecation message
-        :param warning_class: class of warning exception to be raised
-        :param func: function to be wrapped around
-        """
-        @wraps(func)
-        def config_handler(*args, **kwargs):
-            warnings.warn(msg, warning_class)
-            return func(*args, **kwargs)
-
-        return config_handler
 
 
 class ConfigMetadataHandler(ConfigHandler):
@@ -510,21 +426,15 @@ class ConfigMetadataHandler(ConfigHandler):
         parse_list = self._parse_list
         parse_file = self._parse_file
         parse_dict = self._parse_dict
-        exclude_files_parser = self._exclude_files_parser
 
         return {
             'platforms': parse_list,
             'keywords': parse_list,
             'provides': parse_list,
-            'requires': self._deprecated_config_handler(
-                parse_list,
-                "The requires parameter is deprecated, please use "
-                "install_requires for runtime dependencies.",
-                DeprecationWarning),
+            'requires': parse_list,
             'obsoletes': parse_list,
             'classifiers': self._get_parser_compound(parse_file, parse_list),
-            'license': exclude_files_parser('license'),
-            'license_files': parse_list,
+            'license': parse_file,
             'description': parse_file,
             'long_description': parse_file,
             'version': self._parse_version,
@@ -545,12 +455,9 @@ class ConfigMetadataHandler(ConfigHandler):
             # Be strict about versions loaded from file because it's easy to
             # accidentally include newlines and other unintended content
             if isinstance(parse(version), LegacyVersion):
-                tmpl = (
-                    'Version loaded from {value} does not '
-                    'comply with PEP 440: {version}'
-                )
-                raise DistutilsOptionError(tmpl.format(**locals()))
-
+                raise DistutilsOptionError('Version loaded from %s does not comply with PEP 440: %s' % (
+                    value, version
+                ))
             return version
 
         version = self._parse_attr(value, self.package_dir)
@@ -597,7 +504,6 @@ class ConfigOptionsHandler(ConfigHandler):
             'packages': self._parse_packages,
             'entry_points': self._parse_file,
             'py_modules': parse_list,
-            'python_requires': SpecifierSet,
         }
 
     def _parse_packages(self, value):
@@ -606,25 +512,16 @@ class ConfigOptionsHandler(ConfigHandler):
         :param value:
         :rtype: list
         """
-        find_directives = ['find:', 'find_namespace:']
-        trimmed_value = value.strip()
+        find_directive = 'find:'
 
-        if trimmed_value not in find_directives:
+        if not value.startswith(find_directive):
             return self._parse_list(value)
-
-        findns = trimmed_value == find_directives[1]
-        if findns and not PY3:
-            raise DistutilsOptionError(
-                'find_namespace: directive is unsupported on Python < 3.3')
 
         # Read function arguments from a dedicated section.
         find_kwargs = self.parse_section_packages__find(
             self.sections.get('packages.find', {}))
 
-        if findns:
-            from setuptools import find_namespace_packages as find_packages
-        else:
-            from setuptools import find_packages
+        from setuptools import find_packages
 
         return find_packages(**find_kwargs)
 
@@ -690,11 +587,3 @@ class ConfigOptionsHandler(ConfigHandler):
         parse_list = partial(self._parse_list, separator=';')
         self['extras_require'] = self._parse_section_to_dict(
             section_options, parse_list)
-
-    def parse_section_data_files(self, section_options):
-        """Parses `data_files` configuration file section.
-
-        :param dict section_options:
-        """
-        parsed = self._parse_section_to_dict(section_options, self._parse_list)
-        self['data_files'] = [(k, v) for k, v in parsed.items()]
