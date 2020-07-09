@@ -3,7 +3,7 @@
 # All the flask and workloadmgr related configuration are setup here.
 # """
 import threading
-from flask import Flask, jsonify
+from flask import Flask
 from flask_cors import CORS
 
 # Create object of flask application

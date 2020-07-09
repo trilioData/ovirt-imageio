@@ -1,29 +1,20 @@
-import time
 import io
 import os
 import uuid
-import subprocess
 import json
-import logging
 import time
-import re
 import shutil
-import stat
 import subprocess
 import configparser
 from queue import Queue, Empty
 from threading import Thread
 from celery import Celery
-import ovirtsdk4 as sdk
-import ovirtsdk4.types as types
-from ovirt_imageio import client
-from ovirt_imageio import ui
-from ovirt_imageio import auth
+
 
 
 app = Celery('celery_tasks', backend='redis', broker='redis://localhost:6379/0')
 
-
+CONF_DIR = '/etc/ovirt-datamover/'
 def enqueue_output(out, queue):
     line = out.read(17)
     while line:
@@ -249,12 +240,12 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
                                 'disk_id': basepath,
                                 'ticket_id': ticket_id})
         temp_random_id = generate_random_string(5)
-        # with open(os.path.join(CONF_DIR, "daemon.conf")) as f:
-        #     sample_config = f.read()
-        # config = configparser.RawConfigParser(allow_no_value=True)
-        # config.readfp(io.BytesIO(sample_config))
-        # mountpath = config.get('nfs_config', 'mount_path')
-        mountpath = "/var/triliovault-mounts/NjYuNzAuMTc4LjIyNTovZGF0YS9uZXdfMjAwZw=="
+        with open(os.path.join(CONF_DIR, "datamover.conf")) as f:
+            sample_config = f.read()
+        config = configparser.RawConfigParser(allow_no_value=True)
+        config.readfp(io.BytesIO(sample_config))
+        mountpath = config.get('nfs_config', 'mount_path')
+        # mountpath = "/var/triliovault-mounts/NjYuNzAuMTc4LjIyNTovZGF0YS9uZXdfMjAwZw=="
         tempdir = mountpath + '/staging/' + temp_random_id
         os.makedirs(tempdir)
         commands = []

@@ -1,7 +1,7 @@
 # Copyright (c) 2015 TrilioData, Inc.
 # All Rights Reserved.
-import os, subprocess
-from flask import Blueprint, request, send_from_directory
+import os
+from flask import Blueprint, request
 from flask.views import MethodView
 from webob import exc
 import celery
