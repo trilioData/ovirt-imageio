@@ -16,23 +16,42 @@ class Tvm(MethodView):
     def snapshot_download(self, ticket_id):
         try:
             body = request.get_json()
-            proxy_url = body['proxy_url']
-            type = body['type']
-            backup_path = body['backup_path']
+            if "backup" == body['method']:
+                proxy_url = body['proxy_url']
+                type = body['type']
+                backup_path = body['backup_path']
+                recent_snap_ids = body['recent_snap_id']
+                print(f"Vm id received in api {proxy_url, type, backup_path, recent_snap_ids, ticket_id}")
+                task = celery_tasks.backup.apply_async((proxy_url, type, backup_path, recent_snap_ids, ticket_id),
+                                   retry=True,
+                                   retry_policy={
+                                       'max_retries': 3,
+                                       'interval_start': 3,
+                                       'interval_step': 0.5,
+                                       'interval_max': 0.5,
+                                   })
 
-            recent_snap_ids = body['recent_snap_id']
+                return {"message": "backup job submitted","task_id":task.id}
+            else:
+                restore_size = body['restore_size']
+                actual_size = body['actual_size']
+                disk_format = body['disk_format']
 
-            print(f"Vm id received in api {proxy_url, type, backup_path, recent_snap_ids, ticket_id}")
-            task = celery_tasks.backup.apply_async((proxy_url, type, backup_path, recent_snap_ids, ticket_id),
-                               retry=True,
-                               retry_policy={
-                                   'max_retries': 3,
-                                   'interval_start': 3,
-                                   'interval_step': 0.5,
-                                   'interval_max': 0.5,
-                               })
+                backup_path = body['backup_path']
+                task = celery_tasks.restore.apply_async((ticket_id,
+                                                    backup_path,
+                                                    disk_format,
+                                                    restore_size,
+                                                    actual_size),
+                                                    retry = True,
+                                                    retry_policy={
+                                                        'max_retries': 3,
+                                                        'interval_start': 3,
+                                                        'interval_step': 0.5,
+                                                        'interval_max': 0.5,
+                                                    })
+                return {"message": "restore job submitted","task_id":task.id}
 
-            return {"message": "backup job submitted","task_id":task.id}
         except Exception as error:
             raise exc.HTTPServerError(explanation=str(error))
 
