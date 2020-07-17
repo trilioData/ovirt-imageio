@@ -243,11 +243,14 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
                                 'disk_id': basepath,
                                 'ticket_id': ticket_id})
         temp_random_id = generate_random_string(5)
-        with open(os.path.join(CONF_DIR, "datamover.conf")) as f:
-            sample_config = f.read()
-        config = configparser.RawConfigParser(allow_no_value=True)
-        config.readfp(io.BytesIO(sample_config))
-        mountpath = config.get('nfs_config', 'mount_path')
+
+        Config = configparser.RawConfigParser(allow_no_value=True)
+        Config.read(os.path.join(CONF_DIR, "datamover.conf"))
+
+        mountpath = Config.get('nfs_config', 'mount_path')
+        print(f"mount path {mountpath}")
+        if not mountpath:
+            raise Exception("Unable to read nfs mount path from daemon.conf")
         # mountpath = "/var/triliovault-mounts/NjYuNzAuMTc4LjIyNTovZGF0YS9uZXdfMjAwZw=="
         tempdir = mountpath + '/staging/' + temp_random_id
         os.makedirs(tempdir)
@@ -648,7 +651,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
     def __get_lvm_size_in_gb(stdout):
         try:
-            block_size = stdout.split('SIZE="')[1].split("\"")[0]
+            block_size = stdout.decode('utf-8').split('SIZE="')[1].split("\"")[0]
         except Exception as ex:
             match_found = re.search("SIZE=\"([A-Z, 0-9]+)\"", stdout)
             if match_found:
