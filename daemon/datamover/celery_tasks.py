@@ -466,7 +466,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         # Get Backing file if present for current disk.
         qemu_cmd = "qemu-img info --output json {}".format(volume_path)
-        print("Executing volume path info cmd: {}", format(qemu_cmd))
+        print(f"Executing volume path info cmd: {qemu_cmd}")
         qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         stdout, stderr = qemu_process.communicate()
         if stderr:
@@ -634,8 +634,8 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
     #                     {'exit_code': 1,
     #                      'stderr': stderr,
     #                      'cmd': cmd})
-    print(stderr)
-    print(f"sfasf {stdout}")
+    print(f"Ticket error {stderr}")
+    print(f"Ticket info {stdout}")
     result = json.loads(stdout)
     volume_path = result['url'].split('file://')[1]
     print(f"volume_path found {volume_path}")

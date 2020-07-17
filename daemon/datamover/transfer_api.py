@@ -6,14 +6,26 @@ from flask.views import MethodView
 from webob import exc
 import celery
 import celery_tasks
+from celery.task.control import revoke
 
 tvm_blueprint = Blueprint("tvm_blueprint", __name__, url_prefix="/v1/admin")
 
 
 class Tvm(MethodView):
     """The file search API controller for the workload manager API."""
+    def check_celery_status(self):
+        celery_service_status = os.system("service ovirt_celery status")
+        if celery_service_status != 0:
+            return False
+        return True
 
     def snapshot_download(self, ticket_id):
+        celery_status = self.check_celery_status()
+        if not celery_status:
+            err_msg = "Celery workers seems to be down at the moment. Unable to retrieve task " \
+                      " Kindly contact your administrator."
+            print(err_msg)
+            raise exc.HTTPInternalServerError(err_msg)
         try:
             body = request.get_json()
             if "backup" == body['method']:
@@ -55,24 +67,17 @@ class Tvm(MethodView):
         except Exception as error:
             raise exc.HTTPServerError(explanation=str(error))
 
-    def check_celery_status(self):
-        celery_service_status = os.system("service ovirt_celery status")
-        if celery_service_status != 0:
-            return False
-        return True
-
     def get(self, task_id):
         if not task_id:
             raise exc.HTTPBadRequest("Task id is required")
         print("Retrieving task %s", task_id)
 
-        # self.log.info("Retrieving task %s", task_id)
-        # celery_status = self.check_celery_status()
-        # if not celery_status:
-        #     err_msg = "Celery workers seems to be down at the moment. Unable to retrieve task " \
-        #               " Kindly contact your administrator."
-        #     self.log.info(err_msg)
-        #     raise exc.HTTPInternalServerError(err_msg)
+        celery_status = self.check_celery_status()
+        if not celery_status:
+            err_msg = "Celery workers seems to be down at the moment. Unable to retrieve task " \
+                      " Kindly contact your administrator."
+            print(err_msg)
+            raise exc.HTTPInternalServerError(err_msg)
         result = {}
         try:
             ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
@@ -88,5 +93,27 @@ class Tvm(MethodView):
             raise Exception(str(e))
         return (result)
 
+    def delete(self, task_id):
+        if not task_id:
+            raise exc.HTTPBadRequest("Task id is required")
+
+        print(f"Stopping execution of task with id: {task_id}")
+        result = {}
+        try:
+            ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
+
+            ctasks.revoke(terminate=True, signal='SIGKILL')
+
+            ctasks = celery.result.AsyncResult(task_id, app=celery_tasks.app)
+            if isinstance(result, Exception):
+                result = {'Exception': str(result)}
+            result['status'] = ctasks.status
+        except KeyError:
+            raise exc.HTTPBadRequest("Task id is not found")
+        except Exception as e:
+            raise Exception(str(e))
+        return (result)
+
 tvm_blueprint.add_url_rule("snapshot_download/<ticket_id>", view_func=Tvm().snapshot_download, methods=["POST"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().get, methods=["GET"])
+tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().delete, methods=["DELETE"])
