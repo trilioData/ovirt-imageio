@@ -243,11 +243,14 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
                                 'disk_id': basepath,
                                 'ticket_id': ticket_id})
         temp_random_id = generate_random_string(5)
-        with open(os.path.join(CONF_DIR, "datamover.conf")) as f:
-            sample_config = f.read()
-        config = configparser.RawConfigParser(allow_no_value=True)
-        config.readfp(io.BytesIO(sample_config))
-        mountpath = config.get('nfs_config', 'mount_path')
+
+        Config = configparser.RawConfigParser(allow_no_value=True)
+        Config.read(os.path.join(CONF_DIR, "datamover.conf"))
+
+        mountpath = Config.get('nfs_config', 'mount_path')
+        print(f"mount path {mountpath}")
+        if not mountpath:
+            raise Exception("Unable to read nfs mount path from daemon.conf")
         # mountpath = "/var/triliovault-mounts/NjYuNzAuMTc4LjIyNTovZGF0YS9uZXdfMjAwZw=="
         tempdir = mountpath + '/staging/' + temp_random_id
         os.makedirs(tempdir)
@@ -466,7 +469,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         # Get Backing file if present for current disk.
         qemu_cmd = "qemu-img info --output json {}".format(volume_path)
-        print("Executing volume path info cmd: {}", format(qemu_cmd))
+        print(f"Executing volume path info cmd: {qemu_cmd}")
         qemu_process = subprocess.Popen(qemu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         stdout, stderr = qemu_process.communicate()
         if stderr:
@@ -634,8 +637,8 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
     #                     {'exit_code': 1,
     #                      'stderr': stderr,
     #                      'cmd': cmd})
-    print(stderr)
-    print(f"sfasf {stdout}")
+    print(f"Ticket error {stderr}")
+    print(f"Ticket info {stdout}")
     result = json.loads(stdout)
     volume_path = result['url'].split('file://')[1]
     print(f"volume_path found {volume_path}")
@@ -648,7 +651,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
     def __get_lvm_size_in_gb(stdout):
         try:
-            block_size = stdout.split('SIZE="')[1].split("\"")[0]
+            block_size = stdout.decode('utf-8').split('SIZE="')[1].split("\"")[0]
         except Exception as ex:
             match_found = re.search("SIZE=\"([A-Z, 0-9]+)\"", stdout)
             if match_found:
