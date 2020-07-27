@@ -686,7 +686,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
             match_found = re.search("SIZE=\"([A-Z, 0-9]+)\"", stdout)
             if match_found:
                 block_size = match_found.group(1)
-
+        print(f"in get lvm size {block_size}")
         if "K" in block_size:
             lvm_size = math.ceil(float(block_size.split('K')[0]))
             lvm_size = math.ceil(lvm_size / (1024 * 1024))
@@ -700,6 +700,8 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         return lvm_size
 
+    print(f" Restore size {restore_size}, actual size {actual_size}")
+
     if is_blk_device(volume_path):
         lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     shell=True)
@@ -709,6 +711,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
         if not stderr:
             print("STDOUT: {}".format(stdout))
             lvm_size_in_gb = __get_lvm_size_in_gb(stdout)
+            print(f"lvm size in gb {lvm_size_in_gb}")
             if restore_size and actual_size:
                 if lvm_size_in_gb < restore_size:
                     print("LVM size before extend: {}".format(lvm_size_in_gb))
