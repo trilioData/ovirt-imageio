@@ -9,6 +9,7 @@ import time
 import shutil
 import subprocess
 import configparser
+import requests
 from queue import Queue, Empty
 from threading import Thread
 from celery import Celery
@@ -44,8 +45,8 @@ def get_source_path_from_ticket(dest_path, ticket_id):
     #                     {'exit_code': 1,
     #                      'stderr': stderr,
     #                      'cmd': cmd})
-    print(stderr)
-    print(f"sfasf {stdout}")
+    print(f"Ticket error {stderr}")
+    print(f"Ticket information {stdout}")
     result = json.loads(stdout)
     src_path = result['url'].split('file://')[1]
     print(f"src_path found {src_path}")
@@ -118,8 +119,12 @@ def download_incremental_snapshot(self, src_path, dest_path, ticket_id):
 
     percentage = 0.0
     while process.poll() is None:
+        try:
+            extend_ticket(ticket_id)
+        except Exception as e:
+            print(f"Exception in ticket extend {str(e)}")
+
         time.sleep(5)
-        print("sleeping 5 sec")
         continue
         # try:
         #     try:
@@ -167,6 +172,8 @@ def download_full_snapshot(self, src_path, dest_path, ticket_id):
         'qemu-img',
         'convert',
         '-p',
+        '-t',
+        'none',
     ]
     cmdspec += ['-O', 'qcow2', src_path, dest_path]
     cmd = " ".join(cmdspec)
@@ -183,9 +190,9 @@ def download_full_snapshot(self, src_path, dest_path, ticket_id):
                                close_fds=True,
                                shell=False)
 
-    queue = Queue()
+    q = Queue()
     read_thread = Thread(target=enqueue_output,
-                         args=(process.stdout, queue))
+                         args=(process.stdout, q))
 
     read_thread.daemon = True  # thread dies with the program
     read_thread.start()
@@ -193,8 +200,20 @@ def download_full_snapshot(self, src_path, dest_path, ticket_id):
     percentage = 0.0
     while process.poll() is None:
         try:
+            extend_ticket(ticket_id)
+        except Exception as e:
+            print(f"Exception in ticket extend {str(e)}")
+
+        time.sleep(5)
+        try:
             try:
-                output = queue.get(timeout=300)
+                qsize = q.qsize()
+                if qsize:
+                    output = q.queue[qsize-1]
+                    q.queue.clear()
+                else:
+                    continue
+                #output = q.get(timeout=300)
             except Empty:
                 print("Error in queue.get()")
                 continue
@@ -333,6 +352,8 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
             'qemu-img',
             'convert',
             '-p',
+            '-t',
+            'none',
         ]
         filename = os.path.basename(str(first_record.get('filename', None)))
         path = os.path.join(tempdir, filename)
@@ -356,10 +377,19 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
         percentage = 0.0
         while process.poll() is None:
             try:
+                extend_ticket(ticket_id)
+            except Exception as e:
+                print(f"Exception in ticket extend {str(e)}")
+
+            time.sleep(5)
+            try:
                 try:
-                    output = queue.get(timeout=300)
-                except Empty:
-                    continue
+                    qsize = queue.qsize()
+                    if qsize:
+                        output = queue.queue[qsize - 1]
+                        queue.queue.clear()
+                    else:
+                        continue
                 except Exception as ex:
                     print(ex)
 
@@ -403,6 +433,19 @@ def is_blk_device(dev):
         print ('Path %s not found in is_blk_device check', dev)
         return False
 
+
+def extend_ticket(ticket_id):
+
+    try:
+        cmd = "curl --unix-socket /run/ovirt-imageio/sock -X PATCH  --data '{\"timeout\":7}' http://localhost/tickets/" + ticket_id
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        stdout, stderr = process.communicate()
+        if stdout:
+            print(f"Ticket extend result {stdout}")
+    except Exception as e:
+        print(f"Exception in extending ticket {ticket_id}")
+
+
 def check_for_odirect_support(src, dest, flag='oflag=direct'):
 
     # Check whether O_DIRECT is supported
@@ -430,14 +473,6 @@ def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids,
                 # We must use the daemon for downloading a backup disk.
                 print(f"transfer url {download_url}... starting download cp")
                 download_incremental_snapshot(self, src_path, backup_dest_path, ticket_id)
-                # with ui.ProgressBar() as pb:
-                #     client.download(
-                #         download_url,
-                #         backup_dest_path,
-                #         "ca.pem",
-                #         # incremental=incremental,
-                #         secure=False,
-                #         progress=pb)
             finally:
                 print(f"Done downloading snapshot to path through client {backup_dest_path}")
             dest_file_format = first_record.get('format', 'qcow2')
@@ -491,21 +526,23 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
             'qemu-img',
             'convert',
             '-p',
+            '-t',
+            'none',
         ]
 
-        if is_blk_device(volume_path) and \
-                check_for_odirect_support(backup_image_file_path,
-                                          volume_path, flag='oflag=direct'):
-            cmdspec += ['-t', 'none']
+        # if is_blk_device(volume_path) and \
+        #         check_for_odirect_support(backup_image_file_path,
+        #                                   volume_path, flag='oflag=direct'):
+        #         pass
 
         cmdspec += ['-O', disk_format, backup_image_file_path, target]
 
-        default_cache = True
-        if default_cache is True:
-            if '-t' in cmdspec:
-                cmdspec.remove('-t')
-            if 'none' in cmdspec:
-                cmdspec.remove('none')
+        # default_cache = True
+        # if default_cache is True:
+        #     if '-t' in cmdspec:
+        #         cmdspec.remove('-t')
+        #     if 'none' in cmdspec:
+        #         cmdspec.remove('none')
         cmd = " ".join(cmdspec)
 
         self.update_state(state='PENDING',
@@ -630,13 +667,6 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
     cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
-    # if stderr:
-    #     print(('Result was %s' % stderr))
-    #     raise Exception("Execution error %(exit_code)d (%(stderr)s). "
-    #                     "cmd %(cmd)s" %
-    #                     {'exit_code': 1,
-    #                      'stderr': stderr,
-    #                      'cmd': cmd})
     print(f"Ticket error {stderr}")
     print(f"Ticket info {stdout}")
     result = json.loads(stdout)
@@ -656,7 +686,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
             match_found = re.search("SIZE=\"([A-Z, 0-9]+)\"", stdout)
             if match_found:
                 block_size = match_found.group(1)
-
+        print(f"in get lvm size {block_size}")
         if "K" in block_size:
             lvm_size = math.ceil(float(block_size.split('K')[0]))
             lvm_size = math.ceil(lvm_size / (1024 * 1024))
@@ -670,6 +700,8 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         return lvm_size
 
+    print(f" Restore size {restore_size}, actual size {actual_size}")
+
     if is_blk_device(volume_path):
         lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     shell=True)
@@ -679,6 +711,7 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
         if not stderr:
             print("STDOUT: {}".format(stdout))
             lvm_size_in_gb = __get_lvm_size_in_gb(stdout)
+            print(f"lvm size in gb {lvm_size_in_gb}")
             if restore_size and actual_size:
                 if lvm_size_in_gb < restore_size:
                     print("LVM size before extend: {}".format(lvm_size_in_gb))
