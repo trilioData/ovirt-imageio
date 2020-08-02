@@ -9,7 +9,6 @@ import time
 import shutil
 import subprocess
 import configparser
-import requests
 from queue import Queue, Empty
 from threading import Thread
 from celery import Celery
