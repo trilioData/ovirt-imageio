@@ -33,6 +33,13 @@ def generate_random_string(string_length=5):
     random = random.replace("-","")
     return random[0:string_length]
 
+def get_size_from_ticket(ticket_id):
+    cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+    stdout, stderr = process.communicate()
+    result = json.loads(stdout)
+    return int(result['size'])
+
 def get_source_path_from_ticket(dest_path, ticket_id):
     cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
@@ -88,81 +95,22 @@ def get_recent_snapshot(recent_snap_id, src_path):
 
 def download_incremental_snapshot(self, src_path, dest_path, ticket_id):
     basepath = os.path.basename(src_path)
-
-    cmdspec = [
-        'cp',
-        src_path,
-        dest_path,
-    ]
-    # cmdspec += ['-O', 'qcow2', src_path, dest_path]
-    cmd = " ".join(cmdspec)
-    print(('Take a Incremental snapshot with cp cmd: %s ' % cmd))
-    self.update_state(state='PENDING',
-                      meta={'Task': 'Starting Backup',
-                            'disk_id': basepath,
-                            'ticket_id': ticket_id})
-    process = subprocess.Popen(cmdspec,
-                               stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE,
-                               bufsize=-1,
-                               close_fds=True,
-                               shell=False)
-
-    queue = Queue()
-    read_thread = Thread(target=enqueue_output,
-                         args=(process.stdout, queue))
-
-    read_thread.daemon = True  # thread dies with the program
-    read_thread.start()
-
-    percentage = 0.0
-    while process.poll() is None:
-        try:
-            extend_ticket(ticket_id)
-        except Exception as e:
-            print(f"Exception in ticket extend {str(e)}")
-
-        time.sleep(5)
-        continue
-        # try:
-        #     try:
-        #         output = queue.get(timeout=300)
-        #     except Empty:
-        #         print("Error in queue.get()")
-        #         continue
-        #     except Exception as ex:
-        #         print("Error in queue.get()")
-        #         print(ex)
-        #
-        #     print(f" op {output.decode('utf-8')}")
-        #     # percentage = re.search(r'\d+\.\d+', output.decode('utf-8')).group(0)
-        #     percentage = output.decode('utf-8')
-        #     message = (("copying from %(path)s to "
-        #             "%(dest)s %(percentage)s %% completed\n") %
-        #            {'path': src_path,
-        #             'dest': dest_path,
-        #             'percentage': str(percentage)})
-        #     print(message)
-        #
-        #     # percentage = float(percentage)
-        #     self.update_state(state='PENDING',
-        #                       meta={'percentage': percentage,
-        #                             'disk_id': basepath,
-        #                             'ticket_id': ticket_id})
-        #
-        # except Exception as ex:
-        #     print(ex)
-        #     pass
-
-    _returncode = process.returncode  # pylint: disable=E1101
-    if _returncode:
-        print(('Result was %s' % _returncode))
-        raise Exception("Execution error %(exit_code)d (%(stderr)s). "
-                        "cmd %(cmd)s" %
-                        {'exit_code': _returncode,
-                         'stderr': process.stderr.read(),
-                         'cmd': cmd})
+    size = get_size_from_ticket(ticket_id)
+    with open(src_path, "rb") as src:
+        with open(dest_path, "wb") as f:
+            copied = 0
+            while True:
+                buf = src.read(8388608)
+                if not buf:
+                    break
+                f.write(buf)
+                copied += len(buf)
+                percentage = float(copied) / size * 100
+                percentage = "%.2f" % percentage
+                self.update_state(state='PENDING',
+                                  meta={'percentage': percentage,
+                                        'disk_id': basepath,
+                                        'ticket_id': ticket_id})
 
 def download_full_snapshot(self, src_path, dest_path, ticket_id):
     basepath = os.path.basename(src_path)
@@ -220,15 +168,12 @@ def download_full_snapshot(self, src_path, dest_path, ticket_id):
                 print("Error in queue.get()")
                 print(ex)
 
-            print(f" op {output.decode('utf-8')}")
+            percentage = output.decode('utf-8').replace('%','').split()
+            if len(percentage) > 1 and '-' not in percentage:
+                percentage = f"{percentage[1]}{percentage[0]}"
+
+
             # percentage = re.search(r'\d+\.\d+', output.decode('utf-8')).group(0)
-            percentage = output.decode('utf-8')
-            message = (("copying from %(path)s to "
-                    "%(dest)s %(percentage)s %% completed\n") %
-                   {'path': src_path,
-                    'dest': dest_path,
-                    'percentage': str(percentage)})
-            print(message)
 
             # percentage = float(percentage)
             self.update_state(state='PENDING',
@@ -567,24 +512,20 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         while process.poll() is None:
             while not queue.empty():
-                output = queue.get(timeout=300)
-                # percentage_found = re.search(r'(\d+\.\d+)', output)
-                # percentage = percentage_found.group() if percentage_found else None
-                percentage = output.decode('utf-8')
-                if percentage:
-                    # percentage = float(percentage)
-                    # if percentage != 0.0:
-                    if True:
-                        print(("copying from %(backup_path)s to "
-                               "%(volume_path)s %(percentage)s %% completed\n") %
-                              {'backup_path': backup_image_file_path,
-                               'volume_path': target,
-                               'percentage': str(percentage)})
+                try:
+                    output = queue.get(timeout=300)
+                    # percentage_found = re.search(r'(\d+\.\d+)', output)
+                    # percentage = percentage_found.group() if percentage_found else None
+                    percentage = output.decode('utf-8').replace('%', '').split()
+                    if len(percentage) > 1 and '-' not in percentage:
+                        percentage = f"{percentage[1]}{percentage[0]}"
 
-                        self.update_state(state='PENDING',
-                                          meta={'percentage': percentage,
-                                                'disk_id': basepath,
-                                                'ticket_id': ticket_id})
+                    self.update_state(state='PENDING',
+                                      meta={'percentage': percentage,
+                                            'disk_id': basepath,
+                                            'ticket_id': ticket_id})
+                except Exception as e:
+                    print(f"Exception in updating restore status {str(e)}")
 
         _returncode = process.returncode  # pylint: disable=E1101
         if _returncode:
