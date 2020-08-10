@@ -168,15 +168,12 @@ def download_full_snapshot(self, src_path, dest_path, ticket_id):
                 print("Error in queue.get()")
                 print(ex)
 
-            print(f" op {output.decode('utf-8')}")
+            percentage = output.decode('utf-8').replace('%','').split()
+            if len(percentage) > 1 and '-' not in percentage:
+                percentage = f"{percentage[1]}{percentage[0]}"
+
+
             # percentage = re.search(r'\d+\.\d+', output.decode('utf-8')).group(0)
-            percentage = output.decode('utf-8')
-            message = (("copying from %(path)s to "
-                    "%(dest)s %(percentage)s %% completed\n") %
-                   {'path': src_path,
-                    'dest': dest_path,
-                    'percentage': str(percentage)})
-            print(message)
 
             # percentage = float(percentage)
             self.update_state(state='PENDING',
@@ -515,24 +512,20 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
 
         while process.poll() is None:
             while not queue.empty():
-                output = queue.get(timeout=300)
-                # percentage_found = re.search(r'(\d+\.\d+)', output)
-                # percentage = percentage_found.group() if percentage_found else None
-                percentage = output.decode('utf-8')
-                if percentage:
-                    # percentage = float(percentage)
-                    # if percentage != 0.0:
-                    if True:
-                        print(("copying from %(backup_path)s to "
-                               "%(volume_path)s %(percentage)s %% completed\n") %
-                              {'backup_path': backup_image_file_path,
-                               'volume_path': target,
-                               'percentage': str(percentage)})
+                try:
+                    output = queue.get(timeout=300)
+                    # percentage_found = re.search(r'(\d+\.\d+)', output)
+                    # percentage = percentage_found.group() if percentage_found else None
+                    percentage = output.decode('utf-8').replace('%', '').split()
+                    if len(percentage) > 1 and '-' not in percentage:
+                        percentage = f"{percentage[1]}{percentage[0]}"
 
-                        self.update_state(state='PENDING',
-                                          meta={'percentage': percentage,
-                                                'disk_id': basepath,
-                                                'ticket_id': ticket_id})
+                    self.update_state(state='PENDING',
+                                      meta={'percentage': percentage,
+                                            'disk_id': basepath,
+                                            'ticket_id': ticket_id})
+                except Exception as e:
+                    print(f"Exception in updating restore status {str(e)}")
 
         _returncode = process.returncode  # pylint: disable=E1101
         if _returncode:
