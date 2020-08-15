@@ -93,6 +93,10 @@ class Tvm(MethodView):
             raise Exception(str(e))
         return (result)
 
+    def ping(self):
+        result = {"status": "Configured"}
+        return result
+
     def delete(self, task_id):
         if not task_id:
             raise exc.HTTPBadRequest("Task id is required")
@@ -117,3 +121,4 @@ class Tvm(MethodView):
 tvm_blueprint.add_url_rule("snapshot_download/<ticket_id>", view_func=Tvm().snapshot_download, methods=["POST"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().get, methods=["GET"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().delete, methods=["DELETE"])
+tvm_blueprint.add_url_rule("ping", view_func=Tvm().ping, methods=["GET"])
