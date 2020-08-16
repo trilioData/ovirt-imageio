@@ -182,6 +182,7 @@ class RemoteService(Service):
         self._server.app = http.Router([
             (r"/images/(.*)", Images(config)),
             (r"/tasks/(.*)", Tasks(config)),
+            (r"/ping", Ping(config)),
         ])
 
         log.debug("%s listening on port %d", self.name, self.port)
@@ -438,4 +439,18 @@ class Tasks(object):
             raise http.Error(http.BAD_REQUEST, "No such task %r" % task_id)
         except Exception as e:
             raise Exception(e.message)
+        return resp.send_json(result)
+
+
+class Ping(object):
+    """
+    Request handler for the /ping resource.
+    """
+    log = logging.getLogger("ping")
+
+    def __init__(self, config):
+        self.config = config
+
+    def get(self, req, resp):
+        result = {"status": "Configured"}
         return resp.send_json(result)
