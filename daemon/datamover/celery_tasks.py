@@ -379,16 +379,16 @@ def is_blk_device(dev):
 
 
 def extend_ticket(ticket_id):
-
-    try:
-        cmd = "curl --unix-socket /run/ovirt-imageio/sock -X PATCH  --data '{\"timeout\":7}' http://localhost/tickets/" + ticket_id
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-        stdout, stderr = process.communicate()
-        if stdout:
-            #print(f"Ticket extend result {stdout}")
-            pass
-    except Exception as e:
-        print(f"Exception in extending ticket {ticket_id}")
+    pass
+    # try:
+    #     cmd = "curl --unix-socket /run/ovirt-imageio/sock -X PATCH  --data '{\"timeout\":7}' http://localhost/tickets/" + ticket_id
+    #     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    #     stdout, stderr = process.communicate()
+    #     if stdout:
+    #         print(f"Ticket extend result {stdout}")
+    #         pass
+    # except Exception as e:
+    #     print(f"Exception in extending ticket {ticket_id}")
 
 
 def check_for_odirect_support(src, dest, flag='oflag=direct'):
