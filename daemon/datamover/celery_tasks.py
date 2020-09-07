@@ -17,7 +17,7 @@ from celery import Celery
 
 app = Celery('celery_tasks', backend='redis', broker='redis://localhost:6379/0')
 
-CONF_DIR = '/etc/ovirt-datamover/'
+CONF_DIR = '/etc/trilio-datamover/'
 def enqueue_output(out, queue):
     line = out.read(17)
     while line:
@@ -34,23 +34,24 @@ def generate_random_string(string_length=5):
     return random[0:string_length]
 
 def get_size_from_ticket(ticket_id):
-    cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
-    stdout, stderr = process.communicate()
-    result = json.loads(stdout)
+    counter = 2
+    result = {}
+    while counter > 0:
+        try:
+            cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+            stdout, stderr = process.communicate()
+            result = json.loads(stdout)
+            break
+        except Exception as e:
+            print(f"Unable to load stdout while getting ticket size {stdout, stderr}")
+        counter = counter-1
     return int(result['size'])
 
 def get_source_path_from_ticket(dest_path, ticket_id):
     cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
-    # if stderr:
-    #     print(('Result was %s' % stderr))
-    #     raise Exception("Execution error %(exit_code)d (%(stderr)s). "
-    #                     "cmd %(cmd)s" %
-    #                     {'exit_code': 1,
-    #                      'stderr': stderr,
-    #                      'cmd': cmd})
     print(f"Ticket error {stderr}")
     print(f"Ticket information {stdout}")
     result = json.loads(stdout)
@@ -95,7 +96,10 @@ def get_recent_snapshot(recent_snap_id, src_path):
 
 def download_incremental_snapshot(self, src_path, dest_path, ticket_id):
     basepath = os.path.basename(src_path)
-    size = get_size_from_ticket(ticket_id)
+    try:
+        size = get_size_from_ticket(ticket_id)
+    except Exception as e:
+        raise Exception(f"Unable to get disk size from ticket, try after sometime")
     with open(src_path, "rb") as src:
         with open(dest_path, "wb") as f:
             copied = 0
