@@ -1,6 +1,8 @@
 # Copyright (c) 2015 TrilioData, Inc.
 # All Rights Reserved.
 import os
+import subprocess
+import json
 from flask import Blueprint, request
 from flask.views import MethodView
 from webob import exc
@@ -10,6 +12,33 @@ from celery.task.control import revoke
 
 tvm_blueprint = Blueprint("tvm_blueprint", __name__, url_prefix="/v1/admin")
 
+def get_ticket_info(ticket_id):
+    cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+    stdout, stderr = process.communicate()
+    print(f"Ticket error {stderr}")
+    print(f"Ticket information {stdout}")
+    result = json.loads(stdout)
+    src_path = result['url'].split('file://')[1]
+    disk_size = result['size']
+    return src_path, disk_size
+
+def get_source_path_from_ticket(dest_path, ticket_id):
+    src_path, disk_size = get_ticket_info(ticket_id)
+
+    if not os.path.exists(str(src_path)):
+        error = 'Source Path [{0}] does not exists.'.format(src_path)
+        path_dir = os.path.dirname(src_path)
+        snapshot_disk_name = os.path.basename(dest_path)
+        new_path = str(os.path.join(path_dir, snapshot_disk_name))
+        if not os.path.exists(new_path):
+            print('Other path [{0}] too does not exists.'.format(new_path))
+            raise Exception(error)
+        else:
+            src_path = new_path
+            print('Original path does not exists. Backing up : [{0}]'.format(src_path))
+
+    return src_path, disk_size
 
 class Tvm(MethodView):
     """The file search API controller for the workload manager API."""
@@ -34,7 +63,13 @@ class Tvm(MethodView):
                 backup_path = body['backup_path']
                 recent_snap_ids = body['recent_snap_id']
                 print(f"Vm id received in api {proxy_url, type, backup_path, recent_snap_ids, ticket_id}")
-                task = celery_tasks.backup.apply_async((proxy_url, type, backup_path, recent_snap_ids, ticket_id),
+                try:
+                    src_path, disk_size = get_source_path_from_ticket(backup_path, ticket_id)
+                except Exception as e:
+                    err = f"Unable to fetch disk size and source path {str(e)}"
+                    raise exc.HTTPInternalServerError(err)
+
+                task = celery_tasks.backup.apply_async((proxy_url, type, backup_path, recent_snap_ids, ticket_id,src_path,disk_size),
                                    retry=True,
                                    retry_policy={
                                        'max_retries': 3,
@@ -50,11 +85,18 @@ class Tvm(MethodView):
                 disk_format = body['disk_format']
 
                 backup_path = body['backup_path']
+                try:
+                    src_path, disk_size = get_ticket_info(ticket_id)
+                except Exception as e:
+                    err = f"Unable to fetch disk size and source path {str(e)}"
+                    raise exc.HTTPInternalServerError(err)
+
                 task = celery_tasks.restore.apply_async((ticket_id,
                                                     backup_path,
                                                     disk_format,
                                                     restore_size,
-                                                    actual_size),
+                                                    actual_size,
+                                                    src_path),
                                                     retry = True,
                                                     retry_policy={
                                                         'max_retries': 3,
