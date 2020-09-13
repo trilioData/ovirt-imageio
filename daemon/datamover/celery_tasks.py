@@ -94,12 +94,8 @@ def get_recent_snapshot(recent_snap_id, src_path):
 
 
 
-def download_incremental_snapshot(self, src_path, dest_path, ticket_id):
+def download_incremental_snapshot(self, src_path, dest_path, ticket_id, size):
     basepath = os.path.basename(src_path)
-    try:
-        size = get_size_from_ticket(ticket_id)
-    except Exception as e:
-        raise Exception(f"Unable to get disk size from ticket, try after sometime")
     with open(src_path, "rb") as src:
         with open(dest_path, "wb") as f:
             copied = 0
@@ -406,9 +402,9 @@ def check_for_odirect_support(src, dest, flag='oflag=direct'):
         return False
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.backup")
-def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticket_id):
-    src_path = get_source_path_from_ticket(backup_dest_path, ticket_id)
+def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids, ticket_id, src_path, size):
     print('Backup type: [{0}]'.format(snapshot_type))
+    print(f"src_path found {src_path}, disk_size {size}")
     if snapshot_type == "full":
         print("performing full")
         download_full_snapshot(self, src_path, backup_dest_path, ticket_id)
@@ -421,7 +417,7 @@ def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids,
             try:
                 # We must use the daemon for downloading a backup disk.
                 print(f"transfer url {download_url}... starting download cp")
-                download_incremental_snapshot(self, src_path, backup_dest_path, ticket_id)
+                download_incremental_snapshot(self, src_path, backup_dest_path, ticket_id, size)
             finally:
                 print(f"Done downloading snapshot to path through client {backup_dest_path}")
             dest_file_format = first_record.get('format', 'qcow2')
@@ -445,7 +441,7 @@ def backup(self, download_url, snapshot_type, backup_dest_path, recent_snap_ids,
 
 @app.task(bind=True, name="ovirt_imageio_daemon.celery_tasks.restore")
 def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
-            actual_size):
+            actual_size, volume_path):
     def transfer_qemu_image_to_volume(
             volume_path,
             backup_image_file_path,
@@ -609,13 +605,6 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
                                   meta={'exception': error})
                 raise Exception(error)
 
-    cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
-    stdout, stderr = process.communicate()
-    print(f"Ticket error {stderr}")
-    print(f"Ticket info {stdout}")
-    result = json.loads(stdout)
-    volume_path = result['url'].split('file://')[1]
     print(f"volume_path found {volume_path}")
 
     # Determine right format and send it accordingly
