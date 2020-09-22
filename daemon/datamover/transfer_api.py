@@ -62,13 +62,9 @@ class Tvm(MethodView):
                 type = body['type']
                 backup_path = body['backup_path']
                 recent_snap_ids = body['recent_snap_id']
-                print(f"Vm id received in api {proxy_url, type, backup_path, recent_snap_ids, ticket_id}")
-                try:
-                    src_path, disk_size = get_source_path_from_ticket(backup_path, ticket_id)
-                except Exception as e:
-                    err = f"Unable to fetch disk size and source path {str(e)}"
-                    raise exc.HTTPInternalServerError(err)
-
+                src_path = body['src_path']
+                disk_size = body['disk_size']
+                print(f"Vm id received in api {proxy_url, type, backup_path, recent_snap_ids, ticket_id, src_path, disk_size}")
                 task = celery_tasks.backup.apply_async((proxy_url, type, backup_path, recent_snap_ids, ticket_id,src_path,disk_size),
                                    retry=True,
                                    retry_policy={
@@ -160,7 +156,23 @@ class Tvm(MethodView):
             raise Exception(str(e))
         return (result)
 
+    def get_ticket_path(self, ticket_id):
+        cmd = 'curl --unix-socket /run/ovirt-imageio/sock -X GET  http://localhost/tickets/' + ticket_id
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+        stdout, stderr = process.communicate()
+        print(f"Ticket error {stderr}")
+        print(f"Ticket information {stdout}")
+        result = json.loads(stdout)
+        src_path = result['url'].split('file://')[1]
+        disk_size = result['size']
+        result = {
+            "src_path": src_path,
+            "disk_size": disk_size
+        }
+        return result
+
 tvm_blueprint.add_url_rule("snapshot_download/<ticket_id>", view_func=Tvm().snapshot_download, methods=["POST"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().get, methods=["GET"])
+tvm_blueprint.add_url_rule("ticket/<ticket_id>", view_func=Tvm().get_ticket_path, methods=["GET"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().delete, methods=["DELETE"])
 tvm_blueprint.add_url_rule("ping", view_func=Tvm().ping, methods=["GET"])
