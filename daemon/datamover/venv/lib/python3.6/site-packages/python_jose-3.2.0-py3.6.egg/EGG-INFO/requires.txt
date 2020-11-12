@@ -1,0 +1,13 @@
+ecdsa<0.15
+pyasn1
+rsa
+six<2.0
+
+[cryptography]
+cryptography
+
+[pycrypto]
+pycrypto<2.7.0,>=2.6.0
+
+[pycryptodome]
+pycryptodome<4.0.0,>=3.3.1
