@@ -659,10 +659,15 @@ def restore(self, ticket_id, backup_image_file_path, disk_format, restore_size,
                     self.update_state(state='PENDING',
                                       meta={'status': 'Successfully Extended Block',
                                             'ticket_id': ticket_id})
-                    lvm_extend = subprocess.Popen(lvm_extend_cmd, stdout=subprocess.PIPE, shell=True)
+                    print("Starting lvmextend command: {}".format(lvm_extend_cmd))
+                    lvm_extend = subprocess.Popen(
+                        lvm_extend_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+                    )
                     stdout, stderr = lvm_extend.communicate()
                     if stderr:
-                        print("Failed to extend LVM disk Exception:" + stderr.decode('utf-8'))
+                        err_msg = "Failed to extend the LVM disk due to {}.".format(stderr.decode('utf-8'))
+                        print(err_msg)
+                        raise Exception(err_msg)
                     else:
                         lvm_info = subprocess.Popen('lsblk -P ' + volume_path, stdout=subprocess.PIPE, shell=True)
                         stdout, stderr = lvm_info.communicate()
