@@ -1,0 +1,4 @@
+botocore>=1.11.3
+future
+jsonpickle
+wrapt
