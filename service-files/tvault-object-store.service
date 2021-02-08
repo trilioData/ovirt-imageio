@@ -1,0 +1,22 @@
+[Unit]
+Description=Tvault object store mount
+# The daemon should only be started if a certificate was rolled out
+# Otherwise the daemon startup will fail
+
+[Service]
+Type=simple
+#Environment=/opt/ovirt-imageio/bin/python
+WorkingDirectory=/opt/ovirt-imageio/daemon/datamover
+
+#WorkingDirectory=/root/mypython/src
+
+ExecStart=/bin/sh -c '/opt/ovirt-imageio/daemon/datamover/venv/bin/python /opt/ovirt-imageio/daemon/datamover/object_store_mount.py'
+KillSignal=SIGTERM
+KillMode=process
+Restart=always
+# The user and group should be the same as vdsm uses.
+User=vdsm
+Group=kvm
+
+[Install]
+WantedBy=multi-user.target
