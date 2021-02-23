@@ -209,8 +209,12 @@ def perform_staging_operation(self, result,src_path,dest_path, first_record,rece
 
         Config = configparser.RawConfigParser(allow_no_value=True)
         Config.read(os.path.join(CONF_DIR, "datamover.conf"))
+        try:
+            mountpath = Config.get('nfs_config', 'mount_path')
+        except Exception as e:
+            print(f"Unable to get nfs config {e}")
+            mountpath = Config.get('s3_config', 'mount_path')
 
-        mountpath = Config.get('nfs_config', 'mount_path')
         print(f"mount path {mountpath}")
         if not mountpath:
             raise Exception("Unable to read nfs mount path from daemon.conf")
