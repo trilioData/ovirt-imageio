@@ -9,7 +9,8 @@ Type=simple
 WorkingDirectory=/opt/ovirt-imageio/daemon/datamover
 
 #WorkingDirectory=/root/mypython/src
-
+LimitNOFILE=20000
+LimitNPROC=20000
 ExecStart=/bin/sh -c '/opt/ovirt-imageio/daemon/datamover/venv/bin/python /opt/ovirt-imageio/daemon/datamover/object_store_mount.py'
 KillSignal=SIGTERM
 KillMode=process
