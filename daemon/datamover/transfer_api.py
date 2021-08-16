@@ -8,6 +8,8 @@ from flask.views import MethodView
 from webob import exc
 import celery
 import celery_tasks
+import socket
+from netifaces import interfaces, ifaddresses, AF_INET
 from celery.task.control import revoke
 
 tvm_blueprint = Blueprint("tvm_blueprint", __name__, url_prefix="/v1/admin")
@@ -135,6 +137,20 @@ class Tvm(MethodView):
         result = {"status": "Configured"}
         return result
 
+    def host(self):
+        hostname = socket.gethostname()
+        ip_address =""
+        try:
+            for ifaceName in interfaces():
+                if ifaceName == 'ovirtmgmt':
+                    addresses = [i['addr'] for i in ifaddresses(ifaceName).setdefault(AF_INET, [{'addr': 'No IP addr'}])]
+                    ip_address = ''.join(addresses)
+        except:
+            ip_address = socket.gethostbyname(hostname)
+
+        result = {"hostname": hostname, "ip_address" : ip_address}
+        return result
+
     def delete(self, task_id):
         if not task_id:
             raise exc.HTTPBadRequest("Task id is required")
@@ -176,3 +192,4 @@ tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().get, methods=["GET
 tvm_blueprint.add_url_rule("ticket/<ticket_id>", view_func=Tvm().get_ticket_path, methods=["GET"])
 tvm_blueprint.add_url_rule("tasks/<task_id>", view_func=Tvm().delete, methods=["DELETE"])
 tvm_blueprint.add_url_rule("ping", view_func=Tvm().ping, methods=["GET"])
+tvm_blueprint.add_url_rule("host", view_func=Tvm().host, methods=["GET"])

@@ -18,6 +18,8 @@ import sys
 import time
 import ConfigParser
 import io
+import socket
+from netifaces import interfaces, ifaddresses, AF_INET
 from wsgiref import simple_server
 
 import subprocess
@@ -183,6 +185,7 @@ class RemoteService(Service):
             (r"/images/(.*)", Images(config)),
             (r"/tasks/(.*)", Tasks(config)),
             (r"/ping", Ping(config)),
+            (r"/host", HostName(config)),
         ])
 
         log.debug("%s listening on port %d", self.name, self.port)
@@ -453,4 +456,26 @@ class Ping(object):
 
     def get(self, req, resp):
         result = {"status": "Configured"}
+        return resp.send_json(result)
+
+
+class HostName(object):
+    """
+    Request handler for the host ip and fqdn
+    """
+    log = logging.getLogger("hostname")
+
+    def __init__(self, config):
+        self.config = config
+
+    def get(self, req, resp):
+        hostname = socket.gethostname()
+        try:
+            for ifaceName in interfaces():
+                if ifaceName == 'ovirtmgmt':
+                    addresses = [i['addr'] for i in ifaddresses(ifaceName).setdefault(AF_INET, [{'addr': 'No IP addr'}])]
+                    ip_address = ''.join(addresses)
+        except:
+            ip_address = socket.gethostbyname(hostname)
+        result = {"hostname": hostname, "ip_address" : ip_address}
         return resp.send_json(result)
