@@ -96,11 +96,12 @@ def get_recent_snapshot(recent_snap_id, src_path):
 
 def download_incremental_snapshot(self, src_path, dest_path, ticket_id, size):
     basepath = os.path.basename(src_path)
+    BUFFER = 16*1024 #16MB
     with open(src_path, "rb") as src:
         with open(dest_path, "wb") as f:
             copied = 0
             while True:
-                buf = src.read(8388608)
+                buf = src.read(BUFFER)
                 if not buf:
                     break
                 f.write(buf)
