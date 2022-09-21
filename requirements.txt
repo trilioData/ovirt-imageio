@@ -27,7 +27,7 @@ IPy==0.75
 isodate==0.5.0
 Jinja2==2.7.2
 jmespath==0.9.0
-jwcrypto==0.4.2
+jwcrypto==1.4
 kitchen==1.1.1
 kombu==4.2.1
 libvirt-python==3.9.0
