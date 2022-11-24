@@ -3,7 +3,7 @@ ansible==2.5.5
 Babel==0.9.6
 backports.ssl-match-hostname==3.5.0.1
 billiard==3.5.0.4
-celery==4.2.1
+celery==5.2.2
 cffi==1.6.0
 chardet==2.2.1
 configobj==4.7.2
