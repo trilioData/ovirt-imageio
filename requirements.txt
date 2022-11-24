@@ -67,7 +67,7 @@ python-daemon==1.6
 python-dateutil==2.4.2
 python-dmidecode==3.10.13
 python-keyczar==0.71rc0
-python-ldap==2.4.15
+python-ldap==3.4.0
 python-linux-procfs==0.4.9
 python-nss==0.16.0
 python-yubico==1.2.3
