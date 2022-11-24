@@ -91,7 +91,7 @@ subprocess32==3.2.6
 subscription-manager==1.20.11
 suds==0.4.1
 urlgrabber==3.10
-urllib3==1.10.2
+urllib3==1.26.5
 vine==1.1.4
 virtualenv==16.0.0
 WebOb==1.2.3
