@@ -13,7 +13,7 @@ dnspython==1.12.0
 enum34==1.0.4
 ethtool==0.8
 gssapi==1.2.0
-httplib2==0.9.1
+httplib2==0.19.0
 idna==2.4
 iniparse==0.4
 ioprocess==1.0.2
