@@ -61,7 +61,7 @@ pygobject==3.22.0
 pygpgme==0.3
 pyinotify==0.9.4
 pyliblzma==0.5.3
-pyOpenSSL==16.2.0
+pyOpenSSL==17.5.0
 python-augeas==0.5.0
 python-daemon==1.6
 python-dateutil==2.4.2
